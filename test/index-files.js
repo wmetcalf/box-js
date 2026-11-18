@@ -372,3 +372,60 @@ describe("String objects and IOC snapshots", function() {
 		}
 	});
 });
+
+describe("lib surface and name aliases", function() {
+	this.timeout(90000);
+
+	it("does not let the sample register a String verifier", function() {
+		const run = runSample(
+			"if (lib.registerSandboxStringValueOf) lib.registerSandboxStringValueOf(function () { return \"http://decoy.example/\"; });\n" +
+			"var o = {k: 1}; o[Symbol.toStringTag] = \"String\";\n" +
+			"InstallProduct(o); InstallProduct(\"http://real.example/a\");\n"
+		);
+		try {
+			assert.deepStrictEqual(run.read("urls.json"), ["http://real.example/a"]);
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+
+	it("takes a String object with its own toStringTag as a URL", function() {
+		const run = runSample(
+			"var u = new String(\"http://evil.example/p\"); u[Symbol.toStringTag] = \"URL\";\n" +
+			"InstallProduct(u);\n"
+		);
+		try {
+			assert.deepStrictEqual(run.read("urls.json"), ["http://evil.example/p"]);
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+
+	it("refuses case and trailing-dot aliases of index files", function() {
+		const run = runSample(
+			"lib.logSnippet(\"ioc.json\", {as: \"x\"}, \"clobber\");\n" +
+			"lib.logSnippet(\"IOC.json.\", {as: \"x\"}, \"clobber\");\n"
+		);
+		try {
+			const names = Object.keys(run.read("snippets.json"));
+			assert.ok(!names.includes("ioc.json") && !names.includes("IOC.json."), JSON.stringify(names));
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+
+	it("dedupes decode IOCs without re-reading a logged value", function() {
+		const run = runSample(
+			"var n = 0; var v = {}; Object.defineProperty(v, \"out\", {enumerable: true,\n" +
+			"  get: function () { if (n++ > 1) throw new Error(\"later boom\"); return \"first\"; }});\n" +
+			"lib.logIOC(\"decodeURI\", v, \"d1\");\n" +
+			"lib.logIOC(\"decodeURI\", {out: \"second\"}, \"d2\");\n"
+		);
+		try {
+			const outs = run.read("IOC.json").filter((e) => e.type === "decodeURI").map((e) => e.value.out);
+			assert.deepStrictEqual(outs, ["first", "second"]);
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+});

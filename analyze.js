@@ -1,4 +1,5 @@
 const lib = require("./lib");
+const stringRealms = require("./string-realms");
 const loop_rewriter = require("./loop_rewriter");
 const equality_rewriter = require("./equality_rewriter");
 const escodegen = require("escodegen");
@@ -2790,8 +2791,8 @@ if (argv["dangerous-vm"]) {
     timeout: (argv.timeout || 10) * 1000,
     sandbox,
   });
-  // Captured before the sample runs; see lib.registerSandboxStringValueOf.
-  lib.registerSandboxStringValueOf(vm.run("String.prototype.valueOf"));
+  // Captured before the sample runs; see string-realms.js.
+  stringRealms.register(vm.run("String.prototype.valueOf"));
 
   // Fake cscript.exe style ReferenceError messages.
   code =
@@ -2914,7 +2915,7 @@ if (argv["dangerous-vm"]) {
           timeout: (argv.timeout || 10) * 1000,
           sandbox,
         });
-        lib.registerSandboxStringValueOf(fallbackVm.run("String.prototype.valueOf"));
+        stringRealms.register(fallbackVm.run("String.prototype.valueOf"));
         fallbackVm.run(originalCode);
         lib.info("Fallback execution successful");
         return;
@@ -2954,7 +2955,7 @@ if (argv["dangerous-vm"]) {
           timeout: (argv.timeout || 10) * 1000,
           sandbox,
         });
-        lib.registerSandboxStringValueOf(fallbackVm.run("String.prototype.valueOf"));
+        stringRealms.register(fallbackVm.run("String.prototype.valueOf"));
 
         fallbackVm.run(originalCode);
         lib.info("Fallback execution successful");

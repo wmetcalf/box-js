@@ -65,15 +65,12 @@ const IOC = [];
 const decode_strings = [];
 let latestUrl = "";
 
-// String.prototype.valueOf of each sandbox realm, captured by analyze.js before the sample
-// runs. A sandbox String reaches the host as a vm2 proxy, which has no [[StringData]] slot
-// for the host's valueOf; the sandbox realm's own valueOf, called on the proxy, checks the
-// real slot (vm2 unwraps `this`), so neither an own valueOf nor a forged toStringTag or
-// prototype fools it, and a later patch of String.prototype.valueOf does not reach it.
-const sandboxStringValueOfs = [];
-function registerSandboxStringValueOf(fn) {
-  if (typeof fn === "function" && !sandboxStringValueOfs.includes(fn)) sandboxStringValueOfs.push(fn);
-}
+// A sandbox String reaches the host as a vm2 proxy, which has no [[StringData]] slot for the
+// host's valueOf; the sandbox realm's own valueOf (see string-realms.js), called on the proxy,
+// checks the real slot (vm2 unwraps `this`), so neither an own valueOf nor a forged
+// toStringTag or prototype fools it, and a later patch of String.prototype.valueOf does not
+// reach it.
+const stringRealms = require("./string-realms");
 
 function errorText(e) {
   try {
@@ -86,19 +83,14 @@ function errorText(e) {
 // The primitive inside a String object (host or sandbox realm), or undefined.
 function stringObjectValue(value) {
   if (!value || typeof value !== "object") return undefined;
-  try {
-    // Cheap pre-filter: every real String object reports this tag (a forged one may too;
-    // the slot checks below decide). Most IOC values are plain objects and stop here.
-    if (Object.prototype.toString.call(value) !== "[object String]") return undefined;
-  } catch (e) {
-    return undefined;
-  }
+  // No toStringTag pre-filter: a real String object may set its own tag. Each IOC value is
+  // serialized once, when it is logged, so the slot checks below are cheap enough.
   try {
     return String.prototype.valueOf.call(value);
   } catch (e) {
     // not a host-realm String object
   }
-  for (const valueOf of sandboxStringValueOfs) {
+  for (const valueOf of stringRealms.list()) {
     try {
       const primitive = valueOf.call(value);
       if (typeof primitive === "string") return primitive;
@@ -174,11 +166,14 @@ function simpleStringify(object, a, b) {
 
 // box-js's own files in the results dir. A resource or snippet name can come from the sample
 // (lib is reachable from the sandbox), so it must be a plain file name and none of these.
-const INDEX_FILES = new Set(["analysis.log", "IOC.json", "urls.json", "active_urls.json",
+// Compared case-insensitively and without a trailing dot, which case-insensitive (macOS) and
+// Windows filesystems treat as the same file.
+const INDEX_FILES = new Set(["analysis.log", "ioc.json", "urls.json", "active_urls.json",
   "snippets.json", "resources.json", "env_vars.json"]);
 function safeResultName(name) {
   name = String(name);
-  if (/^[0-9A-Za-z_-][0-9A-Za-z._-]{0,127}$/.test(name) && !INDEX_FILES.has(name)) return name;
+  if (/^[0-9A-Za-z_-][0-9A-Za-z._-]{0,127}$/.test(name) && !name.endsWith(".") &&
+      !INDEX_FILES.has(name.toLowerCase())) return name;
   const renamed = uuid.v4();
   log("warn", `Refused result file name ${JSON.stringify(name.slice(0, 200))}; using ${renamed}`);
   return renamed;
@@ -280,20 +275,21 @@ function logIOC(type, value, description) {
   // The value comes from the sample and may not serialize (a BigInt, nesting deep enough to
   // exhaust the stack, a throwing getter); its snapshot then holds a placeholder.
   const valueJson = snapshot(value);
+  const isDecode = type === "decodeURIComponent" || type === "unescape" || type === "decodeURI";
+  let out;
+  try {
+    out = isDecode && value ? value.out : undefined; // read once: a getter may turn hostile
+  } catch (e) {
+    out = undefined;
+  }
 
   // Check if this IOC already exists
   const isDuplicate = IOC.some((ioc, i) => {
     // Match by type first
     if (ioc.type !== type) return false;
 
-    // For decode strings, compare the output value
-    if (
-      (type === "decodeURIComponent" ||
-       type === "unescape" ||
-       type === "decodeURI") &&
-      ioc.value && value &&
-      ioc.value.out === value.out
-    ) {
+    // For decode strings, compare the output value (as read when each was logged)
+    if (isDecode && out !== undefined && IOCSnapshots[i].out === out) {
       return true;
     }
 
@@ -304,14 +300,9 @@ function logIOC(type, value, description) {
   // Only add if not a duplicate
   if (!isDuplicate) {
     // For specific decode types, also track in decode_strings
-    if (
-      type === "decodeURIComponent" ||
-      type === "unescape" ||
-      type === "decodeURI" &&
-      value && value.out
-    ) {
-      if (decode_strings.indexOf(value.out) === -1) {
-        decode_strings.push(value.out);
+    if (isDecode && out) {
+      if (decode_strings.indexOf(out) === -1) {
+        decode_strings.push(out);
       }
     }
 
@@ -321,7 +312,7 @@ function logIOC(type, value, description) {
       .filter(([, json]) => json !== undefined)
       .map(([key, json]) => "\t\"" + key + "\": " + json.replace(/\n/g, "\n\t"));
     const entryJson = fields.length ? "{\n" + fields.join(",\n") + "\n}" : "{}";
-    IOCSnapshots.push({ valueJson, entryJson });
+    IOCSnapshots.push({ valueJson, entryJson, out });
 
     // The same layout simpleStringify(IOC, null, "\t") wrote.
     fs.writeFileSync(
@@ -698,7 +689,6 @@ module.exports = {
     }
   },
   logSnippet,
-  registerSandboxStringValueOf,
   logJS: function (code) {
     const filename = uuid.v4() + ".js";
     log("verb", `Code saved to ${filename}`);

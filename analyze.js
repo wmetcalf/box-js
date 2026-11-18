@@ -2482,7 +2482,9 @@ const sandbox = {
         get(target, name) {
           if (name === Symbol.toPrimitive) return () => target.href;
           // A read is not a fetch: logging it as a URL made "about:blank" or "localhost"
-          // the latest (and so the active) URL. Navigations are logged by set/assign/replace.
+          // the latest (and so the active) URL. Navigations are logged by set/assign/replace;
+          // reads (a geofence check, say) are still traced.
+          if (typeof name === "string") lib.verbose(`Script read document.location.${name}`);
           return target[name];
         },
         set(target, name, value) {
@@ -2788,6 +2790,8 @@ if (argv["dangerous-vm"]) {
     timeout: (argv.timeout || 10) * 1000,
     sandbox,
   });
+  // Captured before the sample runs; see lib.registerSandboxStringValueOf.
+  lib.registerSandboxStringValueOf(vm.run("String.prototype.valueOf"));
 
   // Fake cscript.exe style ReferenceError messages.
   code =
@@ -2910,6 +2914,7 @@ if (argv["dangerous-vm"]) {
           timeout: (argv.timeout || 10) * 1000,
           sandbox,
         });
+        lib.registerSandboxStringValueOf(fallbackVm.run("String.prototype.valueOf"));
         fallbackVm.run(originalCode);
         lib.info("Fallback execution successful");
         return;
@@ -2949,6 +2954,7 @@ if (argv["dangerous-vm"]) {
           timeout: (argv.timeout || 10) * 1000,
           sandbox,
         });
+        lib.registerSandboxStringValueOf(fallbackVm.run("String.prototype.valueOf"));
 
         fallbackVm.run(originalCode);
         lib.info("Fallback execution successful");

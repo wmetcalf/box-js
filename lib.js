@@ -192,11 +192,14 @@ function simpleStringify(object, a, b) {
 // Compared case-insensitively and without a trailing dot, which case-insensitive (macOS) and
 // Windows filesystems treat as the same file.
 const INDEX_FILES = new Set(["analysis.log", "ioc.json", "urls.json", "active_urls.json",
-  "snippets.json", "resources.json", "env_vars.json"]);
+  "snippets.json", "resources.json", "env_vars.json",
+  "harrington.json"]); // written into the results dir by tools/harrington-enrich.js
+// Windows device names, with or without an extension, are not files there.
+const DEVICE_NAME = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i;
 function safeResultName(name) {
   name = String(name);
   if (/^[0-9A-Za-z_-][0-9A-Za-z._-]{0,127}$/.test(name) && !name.endsWith(".") &&
-      !INDEX_FILES.has(name.toLowerCase())) return name;
+      !INDEX_FILES.has(name.toLowerCase()) && !DEVICE_NAME.test(name)) return name;
   const renamed = uuid.v4();
   log("warn", `Refused result file name ${JSON.stringify(name.slice(0, 200))}; using ${renamed}`);
   return renamed;

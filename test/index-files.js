@@ -404,11 +404,15 @@ describe("lib surface and name aliases", function() {
 	it("refuses case and trailing-dot aliases of index files", function() {
 		const run = runSample(
 			"lib.logSnippet(\"ioc.json\", {as: \"x\"}, \"clobber\");\n" +
-			"lib.logSnippet(\"IOC.json.\", {as: \"x\"}, \"clobber\");\n"
+			"lib.logSnippet(\"IOC.json.\", {as: \"x\"}, \"clobber\");\n" +
+			"lib.logSnippet(\"harrington.json\", {as: \"x\"}, \"clobber\");\n" +
+			"lib.logSnippet(\"NUL.txt\", {as: \"x\"}, \"clobber\");\n"
 		);
 		try {
 			const names = Object.keys(run.read("snippets.json"));
-			assert.ok(!names.includes("ioc.json") && !names.includes("IOC.json."), JSON.stringify(names));
+			for (const bad of ["ioc.json", "IOC.json.", "harrington.json", "NUL.txt"]) {
+				assert.ok(!names.includes(bad), JSON.stringify(names));
+			}
 		} finally {
 			fs.rmSync(run.work, {recursive: true, force: true});
 		}

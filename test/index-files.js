@@ -463,3 +463,22 @@ describe("String objects at the top level, and a patched Function.prototype.call
 		}
 	});
 });
+
+describe("decode IOC out", function() {
+	this.timeout(90000);
+
+	it("reads out once, for both the record and the dedupe", function() {
+		const run = runSample(
+			"var n = 0; var v = {}; Object.defineProperty(v, \"out\", {enumerable: true,\n" +
+			"  get: function () { return n++ ? \"second\" : \"first\"; }});\n" +
+			"lib.logIOC(\"decodeURI\", v, \"d1\");\n" +
+			"lib.logIOC(\"decodeURI\", {out: \"second\"}, \"d2\");\n"
+		);
+		try {
+			const outs = run.read("IOC.json").filter((e) => e.type === "decodeURI").map((e) => e.value.out);
+			assert.deepStrictEqual(outs, ["first", "second"]);
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+});

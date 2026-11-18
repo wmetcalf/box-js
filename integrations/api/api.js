@@ -287,6 +287,17 @@ app.get("/sample/:id/urls", async (req, res) => {
     res.send(await p(fs.readFile)(file, "utf8"));
 });
 
+// resources.json and snippets.json are name-keyed maps. Analyses from before box-js wrote them
+// as maps hold a list of nulls (nothing recoverable); serve those as an empty map so every
+// response matches the documented schema.
+function indexMap(text) {
+    try {
+	return Array.isArray(JSON.parse(text)) ? "{}" : text;
+    } catch (e) {
+	return text;
+    }
+}
+
 /* GET /sample/:id/resources
  *
  * Arguments:
@@ -312,7 +323,7 @@ app.get("/sample/:id/resources", async (req, res) => {
 	return;
     }
 
-    res.send(await p(fs.readFile)(file, "utf8"));
+    res.send(indexMap(await p(fs.readFile)(file, "utf8")));
 });
 
 /* GET /sample/:id/snippets
@@ -340,7 +351,7 @@ app.get("/sample/:id/snippets", async (req, res) => {
 	return;
     }
 
-    res.send(await p(fs.readFile)(file, "utf8"));
+    res.send(indexMap(await p(fs.readFile)(file, "utf8")));
 });
 
 /* GET /sample/:id/ioc

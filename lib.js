@@ -294,11 +294,16 @@ function logIOC(type, value, description) {
   // exhaust the stack, a throwing getter); its snapshot then holds a placeholder.
   const valueJson = snapshot(value);
   const isDecode = type === "decodeURIComponent" || type === "unescape" || type === "decodeURI";
+  // `out` as recorded in the snapshot: a live getter could return something else (or throw)
+  // on a second read, and the dedupe must match what IOC.json holds.
   let out;
-  try {
-    out = isDecode && value ? value.out : undefined; // read once: a getter may turn hostile
-  } catch (e) {
-    out = undefined;
+  if (isDecode && valueJson !== undefined) {
+    try {
+      const recorded = JSON.parse(valueJson);
+      out = recorded && typeof recorded === "object" ? recorded.out : undefined;
+    } catch (e) {
+      out = undefined;
+    }
   }
 
   // Check if this IOC already exists

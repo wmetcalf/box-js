@@ -65,11 +65,17 @@ let latestUrl = "";
 function simpleStringify(object, a, b) {
   if (object && typeof object === "object") {
     const tmpObject = copyWithoutCircularReferences([object], object);
-    var newObject = [];
-    for (var i = 0; i < Object.keys(tmpObject).length; i++) {
-      newObject.push(tmpObject["" + i]);
+    if (Array.isArray(object)) {
+      var newObject = [];
+      for (var i = 0; i < Object.keys(tmpObject).length; i++) {
+        newObject.push(tmpObject["" + i]);
+      }
+      object = newObject;
+    } else {
+      // Name-keyed maps (snippets.json, resources.json) stay maps. Re-indexing them
+      // by 0..n-1 wrote a list of nulls.
+      object = tmpObject;
     }
-    object = newObject;
   }
   return JSON.stringify(object, a, b);
 
@@ -568,11 +574,12 @@ module.exports = {
         sha256,
       };
       logIOC("NewResource", resource, "The script created a resource.");
+      // Record before writing, or resources.json always lags one resource behind.
+      resources[resourceName] = resource;
       fs.writeFileSync(
         path.join(directory, "resources.json"),
         simpleStringify(resources, null, "\t")
       );
-      resources[resourceName] = resource;
     }
   },
   logSnippet,

@@ -65,6 +65,29 @@ const IOC = [];
 const decode_strings = [];
 let latestUrl = "";
 
+// The primitive inside a String object, or undefined. String.prototype.valueOf checks the
+// internal slot, so it cannot be fooled by a sample-set Symbol.toStringTag. A sandbox String
+// reaches the host as a vm2 proxy, which has no slot; it is recognised by its String
+// prototype and real valueOf, and an object that sets its own toStringTag is not a String.
+function stringObjectValue(value) {
+  try {
+    return String.prototype.valueOf.call(value);
+  } catch (e) {
+    // not a host String object
+  }
+  try {
+    if (!value || typeof value !== "object") return undefined;
+    if (Object.getOwnPropertySymbols(value).includes(Symbol.toStringTag)) return undefined;
+    const proto = Object.getPrototypeOf(value);
+    if (!proto || !proto.constructor || proto.constructor.name !== "String") return undefined;
+    if (Object.prototype.toString.call(value) !== "[object String]") return undefined;
+    const primitive = value.valueOf();
+    return typeof primitive === "string" ? primitive : undefined;
+  } catch (e) {
+    return undefined; // a throwing getter or trap: not a usable string
+  }
+}
+
 function simpleStringify(object, a, b) {
   if (object && typeof object === "object") {
     const tmpObject = copyWithoutCircularReferences([object], object);
@@ -106,13 +129,11 @@ function simpleStringify(object, a, b) {
     }
     Object.keys(object).forEach(function (key) {
       var value = object[key];
-      var boxedString = false;
-      try {
-        boxedString = value && typeof value === "object" &&
-          Object.prototype.toString.call(value) === "[object String]";
-        if (boxedString) value = String(value); // a String object (a URL), not a char map
-      } catch (e) {
-        boxedString = false;
+      if (value && typeof value === "object") {
+        var unboxed = stringObjectValue(value);
+        if (unboxed !== undefined) value = unboxed; // a String object (a URL), not a char map
+      } else if (typeof value === "bigint") {
+        value = value.toString(); // JSON.stringify throws on a BigInt
       }
       if (value && typeof value === "object") {
         if (references.indexOf(value) < 0) {
@@ -293,14 +314,10 @@ function logUrl(method, url) {
   // A URL is a string or a String object (from any realm); anything else (a function, a
   // getter) is logged but is not a URL: it is kept out of urls.json and latestUrl, which
   // feeds active_urls.json and each resource's latestUrl.
-  let isString = typeof url === "string";
-  let cleanUrl = url;
-  try {
-    if (!isString) isString = Object.prototype.toString.call(url) === "[object String]";
-    if (isString) cleanUrl = String(url).trim();
-  } catch (e) {
-    isString = false; // a throwing Symbol.toStringTag or toString: not a usable URL
-  }
+  let cleanUrl = typeof url === "string" ? url : stringObjectValue(url);
+  const isString = typeof cleanUrl === "string";
+  if (isString) cleanUrl = cleanUrl.trim();
+  else cleanUrl = url;
 
   log("info", `${method} ${printable(cleanUrl)}`);
   if (!isString) return;

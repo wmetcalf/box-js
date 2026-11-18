@@ -294,3 +294,33 @@ describe("what reaches IOC.json, urls.json and env_vars.json", function() {
 		}
 	});
 });
+
+describe("forged and unserializable values", function() {
+	this.timeout(90000);
+
+	it("serializes a BigInt in snippet metadata and keeps going", function() {
+		const run = runSample(
+			"lib.logSnippet(\"s.js\", {as: BigInt(7)}, \"\");\n" +
+			"lib.logIOC(\"After\", {ok: 1}, \"after\");\n"
+		);
+		try {
+			assert.deepStrictEqual(run.read("snippets.json")["s.js"], {as: "7"});
+			assert.ok(run.read("IOC.json").some((e) => e.type === "After"));
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+
+	it("does not collapse an object that forges a String toStringTag", function() {
+		const run = runSample(
+			"var h = {Authorization: \"Bearer secret\"}; h[Symbol.toStringTag] = \"String\";\n" +
+			"lib.logIOC(\"Forged\", {headers: h}, \"forged\");\n"
+		);
+		try {
+			const e = run.read("IOC.json").find((x) => x.type === "Forged");
+			assert.deepStrictEqual(e.value.headers, {Authorization: "Bearer secret"});
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+});

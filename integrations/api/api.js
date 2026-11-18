@@ -336,7 +336,7 @@ app.get("/sample/:id/snippets", async (req, res) => {
 
     const file = path.join(outputFolder, "sample.js.results", "snippets.json");
     if (!await p(fs.exists)(file)) {
-	res.send("[]");
+	res.send("{}");
 	return;
     }
 

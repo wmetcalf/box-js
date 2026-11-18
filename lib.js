@@ -66,8 +66,10 @@ function simpleStringify(object, a, b) {
   if (object && typeof object === "object") {
     const tmpObject = copyWithoutCircularReferences([object], object);
     if (Array.isArray(object)) {
+      // Bound by the array's own length: copyWithoutCircularReferences drops function
+      // elements, so its key count is short and would cut the last real elements.
       var newObject = [];
-      for (var i = 0; i < Object.keys(tmpObject).length; i++) {
+      for (var i = 0; i < object.length; i++) {
         newObject.push(tmpObject["" + i]);
       }
       object = newObject;

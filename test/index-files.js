@@ -97,3 +97,41 @@ describe("array index files", function() {
 		}
 	});
 });
+
+describe("index file hardening", function() {
+	this.timeout(90000);
+
+	it("keeps nested arrays as arrays", function() {
+		const run = runSample("lib.logIOC(\"Probe\", {args: [\"-nop\", \"-enc\", \"SQBFAFgA\"]}, \"probe\");\n");
+		try {
+			const probe = run.read("IOC.json").find((e) => e.type === "Probe");
+			assert.ok(probe, "no Probe IOC");
+			assert.deepStrictEqual(probe.value.args, ["-nop", "-enc", "SQBFAFgA"]);
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+
+	it("lists only string URLs in urls.json", function() {
+		const run = runSample(
+			"InstallProduct(\"http://first.example/a.exe\");\n" +
+			"InstallProduct(function(){return 1;});\n"
+		);
+		try {
+			assert.deepStrictEqual(run.read("urls.json"), ["http://first.example/a.exe"]);
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+
+	it("does not pass a resource name through a shell", function() {
+		const run = runSample("lib.logResource(\"$(touch${IFS}PWNED_file_cmd)\", \"C:\\\\x.txt\", \"hello\");\n");
+		try {
+			assert.ok(!fs.existsSync(path.join(run.work, "PWNED_file_cmd")), "command substitution ran");
+			assert.ok(!fs.existsSync(path.join(boxDir, "PWNED_file_cmd")), "command substitution ran");
+		} finally {
+			fs.rmSync(path.join(boxDir, "PWNED_file_cmd"), {force: true});
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+});

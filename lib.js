@@ -65,24 +65,16 @@ let latestUrl = "";
 function simpleStringify(object, a, b) {
   if (object && typeof object === "object") {
     const tmpObject = copyWithoutCircularReferences([object], object);
-    if (Array.isArray(object)) {
-      // Bound by the array's own length: copyWithoutCircularReferences drops function
-      // elements, so its key count is short and would cut the last real elements.
-      var newObject = [];
-      for (var i = 0; i < object.length; i++) {
-        newObject.push(tmpObject["" + i]);
-      }
-      object = newObject;
-    } else {
-      // Name-keyed maps (snippets.json, resources.json) stay maps. Re-indexing them
-      // by 0..n-1 wrote a list of nulls.
-      object = tmpObject;
-    }
+    // Name-keyed maps (snippets.json, resources.json) stay maps and arrays stay arrays.
+    // Re-indexing every object by 0..n-1 wrote the maps as lists of nulls.
+    object = tmpObject;
   }
   return JSON.stringify(object, a, b);
 
   function copyWithoutCircularReferences(references, object) {
-    var cleanObject = {};
+    // Arrays stay arrays at every depth (an IOC's args, a RegWrite byte list), and a dropped
+    // function element leaves a hole that serializes as null instead of shifting the rest.
+    var cleanObject = Array.isArray(object) ? [] : {};
     Object.keys(object).forEach(function (key) {
       var value = object[key];
       if (value && typeof value === "object") {
@@ -233,8 +225,8 @@ function logUrl(method, url) {
   log("info", `${method} ${cleanUrl}`);
   latestUrl = cleanUrl;
   
-  // Only add unique URLs to the list
-  if (urls.indexOf(cleanUrl) === -1) urls.push(cleanUrl);
+  // Only add unique URLs to the list; urls.json is a list of strings.
+  if (typeof cleanUrl === "string" && urls.indexOf(cleanUrl) === -1) urls.push(cleanUrl);
   
   fs.writeFileSync(
     path.join(directory, "urls.json"),
@@ -539,10 +531,12 @@ module.exports = {
     let filetype = "";
     if (doLog) {
       log("info", `Saved ${filePath} (${content.length} bytes)`);
+      // No shell: the name reaches here from the sandbox (lib.logResource), and JSON
+      // quoting does not stop $(...) or backticks.
       filetype = child_process
-        .execSync("file " + simpleStringify(filePath))
-        .toString("utf8");
-      filetype = filetype.replace(`${filePath}: `, "").replace("\n", "");
+        .execFileSync("file", ["-b", "--", filePath])
+        .toString("utf8")
+        .replace("\n", "");
       log("info", `${filePath} has been detected as ${filetype}.`);
     }
     if (fileWriteCount[filePath] == MAXWRITES + 1) {

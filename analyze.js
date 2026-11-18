@@ -2481,8 +2481,8 @@ const sandbox = {
       {
         get(target, name) {
           if (name === Symbol.toPrimitive) return () => target.href;
-          const docLocationGetValue = target[name];
-          lib.logUrl("document.location.get", docLocationGetValue);
+          // A read is not a fetch: logging it as a URL made "about:blank" or "localhost"
+          // the latest (and so the active) URL. Navigations are logged by set/assign/replace.
           return target[name];
         },
         set(target, name, value) {

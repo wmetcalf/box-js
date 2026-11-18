@@ -59,6 +59,7 @@ const activeUrls = [];
 // prototype: "__proto__" must be an ordinary key.
 const snippets = Object.create(null);
 const resources = Object.create(null);
+const setVars = Object.create(null);
 const files = {};
 const IOC = [];
 const decode_strings = [];
@@ -90,20 +91,39 @@ function simpleStringify(object, a, b) {
     // one, e.g. a[4294967294] from the sample, would otherwise be serialized as billions of
     // nulls, and extra properties would be dropped, so those keep the index-keyed object form.
     var asArray = isDenseArray(object);
-    var cleanObject = asArray ? [] : Object.create(null);
+    // Plain {} copies: null-prototype ones cost more stack per level in JSON.stringify,
+    // which let shallower nesting make the IOC.json write throw. A "__proto__" key is
+    // defined, not assigned, so it stays an ordinary own key.
+    var cleanObject = asArray ? [] : {};
     if (asArray) cleanObject.length = object.length;
+    function put(key, value) {
+      if (key === "__proto__") {
+        Object.defineProperty(cleanObject, key,
+          {value: value, enumerable: true, writable: true, configurable: true});
+      } else {
+        cleanObject[key] = value;
+      }
+    }
     Object.keys(object).forEach(function (key) {
       var value = object[key];
+      var boxedString = false;
+      try {
+        boxedString = value && typeof value === "object" &&
+          Object.prototype.toString.call(value) === "[object String]";
+        if (boxedString) value = String(value); // a String object (a URL), not a char map
+      } catch (e) {
+        boxedString = false;
+      }
       if (value && typeof value === "object") {
         if (references.indexOf(value) < 0) {
           references.push(value);
-          cleanObject[key] = copyWithoutCircularReferences(references, value);
+          put(key, copyWithoutCircularReferences(references, value));
           references.pop();
         } else {
-          cleanObject[key] = "###_Circular_###";
+          put(key, "###_Circular_###");
         }
       } else if (typeof value !== "function") {
-        cleanObject[key] = value;
+        put(key, value);
       }
     });
     return cleanObject;
@@ -202,8 +222,15 @@ const getUUID = uuid.v4;
 function logIOC(type, value, description) {
   log("info", "IOC: " + description);
 
-  // Create a string representation of the value for comparison
-  const valueStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
+  // Create a string representation of the value for comparison. The value comes from the
+  // sample and may not serialize (a BigInt, nesting deep enough to exhaust the stack).
+  let valueStr;
+  try {
+    valueStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
+  } catch (e) {
+    value = `<unserializable: ${e.message}>`;
+    valueStr = value;
+  }
   
   // Check if this IOC already exists
   const isDuplicate = IOC.some(ioc => {
@@ -248,12 +275,17 @@ function logIOC(type, value, description) {
     
     // Add to IOC collection
     IOC.push({ type, value, description });
-    
-    // Write to file
-    fs.writeFileSync(
-      path.join(directory, "IOC.json"),
-      simpleStringify(IOC, null, "\t")
-    );
+
+    // Write to file. An entry that cannot be serialized would stop every later write, so
+    // it is kept as a placeholder instead.
+    let serialized;
+    try {
+      serialized = simpleStringify(IOC, null, "\t");
+    } catch (e) {
+      IOC[IOC.length - 1] = { type, value: `<unserializable: ${e.message}>`, description };
+      serialized = simpleStringify(IOC, null, "\t");
+    }
+    fs.writeFileSync(path.join(directory, "IOC.json"), serialized);
   }
 }
 
@@ -283,7 +315,6 @@ function logUrl(method, url) {
   );
 }
 
-const setVars = {};
 function logEnvVar(varName, varVal) {
     var dots = " <snipped>...";
     if (varVal.length < 200) dots = "";

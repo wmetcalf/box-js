@@ -55,8 +55,10 @@ if (process.argv[3]) {
 
 const urls = [];
 const activeUrls = [];
-const snippets = {};
-const resources = {};
+// Keyed by names the sample can choose (lib is reachable from the sandbox), so no
+// prototype: "__proto__" must be an ordinary key.
+const snippets = Object.create(null);
+const resources = Object.create(null);
 const files = {};
 const IOC = [];
 const decode_strings = [];
@@ -71,13 +73,25 @@ function simpleStringify(object, a, b) {
   }
   return JSON.stringify(object, a, b);
 
+  function isDenseArray(value) {
+    if (!Array.isArray(value)) return false;
+    var keys = Object.keys(value);
+    if (keys.length !== value.length) return false;
+    for (var k = 0; k < keys.length; k++) {
+      if (keys[k] !== String(k)) return false;
+    }
+    return true;
+  }
+
   function copyWithoutCircularReferences(references, object) {
     // Arrays stay arrays at every depth (an IOC's args, a RegWrite byte list), and a dropped
-    // function element leaves a hole that serializes as null instead of shifting the rest.
+    // function element, trailing or not, leaves a hole that serializes as null.
     // Only a dense array (every index present, nothing else) is copied as an array; a sparse
     // one, e.g. a[4294967294] from the sample, would otherwise be serialized as billions of
-    // nulls, so it keeps the old index-keyed object form.
-    var cleanObject = Array.isArray(object) && Object.keys(object).length === object.length ? [] : {};
+    // nulls, and extra properties would be dropped, so those keep the index-keyed object form.
+    var asArray = isDenseArray(object);
+    var cleanObject = asArray ? [] : Object.create(null);
+    if (asArray) cleanObject.length = object.length;
     Object.keys(object).forEach(function (key) {
       var value = object[key];
       if (value && typeof value === "object") {
@@ -222,14 +236,19 @@ function logIOC(type, value, description) {
 }
 
 function logUrl(method, url) {
-  // Ensure url is a string and trim whitespace
-  const cleanUrl = typeof url === 'string' ? url.trim() : url;
-  
+  // A URL is a string or a String object (from any realm); anything else (a function, a
+  // getter) is logged but is not a URL: it is kept out of urls.json and latestUrl, which
+  // feeds active_urls.json and each resource's latestUrl.
+  const isString = typeof url === "string" ||
+    Object.prototype.toString.call(url) === "[object String]";
+  const cleanUrl = isString ? String(url).trim() : url;
+
   log("info", `${method} ${cleanUrl}`);
+  if (!isString) return;
   latestUrl = cleanUrl;
-  
-  // Only add unique URLs to the list; urls.json is a list of strings.
-  if (typeof cleanUrl === "string" && urls.indexOf(cleanUrl) === -1) urls.push(cleanUrl);
+
+  // Only add unique URLs to the list
+  if (urls.indexOf(cleanUrl) === -1) urls.push(cleanUrl);
   
   fs.writeFileSync(
     path.join(directory, "urls.json"),

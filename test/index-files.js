@@ -19,6 +19,7 @@ function runSample(source) {
 	const sample = path.join(work, "sample.js");
 	fs.writeFileSync(sample, source);
 	execFileSync(process.execPath, [path.join(boxDir, "run.js"), sample, `--output-dir=${work}`], {
+		cwd: work,
 		stdio: "ignore",
 		timeout: 60000,
 	});
@@ -112,13 +113,15 @@ describe("index file hardening", function() {
 		}
 	});
 
-	it("lists only string URLs in urls.json", function() {
+	it("lists only string URLs in urls.json, String objects included", function() {
 		const run = runSample(
+			"InstallProduct(function(){return 1;});\n" +
 			"InstallProduct(\"http://first.example/a.exe\");\n" +
-			"InstallProduct(function(){return 1;});\n"
+			"InstallProduct(new String(\" http://second.example/b.exe \"));\n"
 		);
 		try {
-			assert.deepStrictEqual(run.read("urls.json"), ["http://first.example/a.exe"]);
+			assert.deepStrictEqual(run.read("urls.json"),
+				["http://first.example/a.exe", "http://second.example/b.exe"]);
 		} finally {
 			fs.rmSync(run.work, {recursive: true, force: true});
 		}
@@ -127,10 +130,9 @@ describe("index file hardening", function() {
 	it("does not pass a resource name through a shell", function() {
 		const run = runSample("lib.logResource(\"$(touch${IFS}PWNED_file_cmd)\", \"C:\\\\x.txt\", \"hello\");\n");
 		try {
+			// runSample runs box-js in run.work, where an injected `touch` would land.
 			assert.ok(!fs.existsSync(path.join(run.work, "PWNED_file_cmd")), "command substitution ran");
-			assert.ok(!fs.existsSync(path.join(boxDir, "PWNED_file_cmd")), "command substitution ran");
 		} finally {
-			fs.rmSync(path.join(boxDir, "PWNED_file_cmd"), {force: true});
 			fs.rmSync(run.work, {recursive: true, force: true});
 		}
 	});
@@ -143,6 +145,53 @@ describe("sparse arrays", function() {
 		const run = runSample("var a = []; a[4294967294] = \"x\"; lib.logSnippet(\"s.js\", {as: a}, \"\");\n");
 		try {
 			assert.deepStrictEqual(run.read("snippets.json")["s.js"], {as: {"4294967294": "x"}});
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+});
+
+describe("hostile names and shapes", function() {
+	this.timeout(90000);
+
+	it("keeps a non-string URL out of latestUrl", function() {
+		const run = runSample(
+			"InstallProduct(\"http://x.example/a.exe\");\n" +
+			"InstallProduct(function(){return 1;});\n" +
+			"lib.logResource(\"r1\", \"C:\\\\x.txt\", \"hello\");\n"
+		);
+		try {
+			assert.strictEqual(run.read("resources.json").r1.latestUrl, "http://x.example/a.exe");
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+
+	it("records a resource and a snippet named __proto__", function() {
+		const run = runSample(
+			"lib.logResource(\"__proto__\", \"C:\\\\hidden.txt\", \"hello\");\n" +
+			"lib.logSnippet(\"__proto__\", {as: \"x\"}, \"\");\n"
+		);
+		try {
+			const resources = run.read("resources.json");
+			assert.ok(Object.prototype.hasOwnProperty.call(resources, "__proto__"), JSON.stringify(resources));
+			const snippets = run.read("snippets.json");
+			assert.ok(Object.prototype.hasOwnProperty.call(snippets, "__proto__"), JSON.stringify(snippets));
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+
+	it("keeps trailing slots and extra array properties", function() {
+		const run = runSample(
+			"lib.logIOC(\"Trail\", {args: [\"a\", function(){}]}, \"t\");\n" +
+			"var a = []; a[2] = \"z\"; a.p = 1; a.q = 2;\n" +
+			"lib.logIOC(\"Extra\", {v: a}, \"e\");\n"
+		);
+		try {
+			const iocs = run.read("IOC.json");
+			assert.deepStrictEqual(iocs.find((e) => e.type === "Trail").value.args, ["a", null]);
+			assert.deepStrictEqual(iocs.find((e) => e.type === "Extra").value.v, {"2": "z", p: 1, q: 2});
 		} finally {
 			fs.rmSync(run.work, {recursive: true, force: true});
 		}

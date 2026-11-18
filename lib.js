@@ -110,7 +110,29 @@ function simpleStringify(object, a, b) {
   }
 }
 
+// box-js's own files in the results dir. A resource or snippet name can come from the sample
+// (lib is reachable from the sandbox), so it must be a plain file name and none of these.
+const INDEX_FILES = new Set(["analysis.log", "IOC.json", "urls.json", "active_urls.json",
+  "snippets.json", "resources.json", "env_vars.json"]);
+function safeResultName(name) {
+  name = String(name);
+  if (/^[0-9A-Za-z_-][0-9A-Za-z._-]{0,127}$/.test(name) && !INDEX_FILES.has(name)) return name;
+  const renamed = uuid.v4();
+  log("warn", `Refused result file name ${JSON.stringify(name.slice(0, 200))}; using ${renamed}`);
+  return renamed;
+}
+
+// Template-interpolating a sample value runs its toString, which can throw.
+function printable(value) {
+  try {
+    return `${value}`;
+  } catch (e) {
+    return "<unprintable>";
+  }
+}
+
 const logSnippet = function (filename, logContent, content) {
+  filename = safeResultName(filename);
   snippets[filename] = logContent;
   fs.writeFileSync(path.join(directory, filename), "" + content);
   fs.writeFileSync(
@@ -239,11 +261,16 @@ function logUrl(method, url) {
   // A URL is a string or a String object (from any realm); anything else (a function, a
   // getter) is logged but is not a URL: it is kept out of urls.json and latestUrl, which
   // feeds active_urls.json and each resource's latestUrl.
-  const isString = typeof url === "string" ||
-    Object.prototype.toString.call(url) === "[object String]";
-  const cleanUrl = isString ? String(url).trim() : url;
+  let isString = typeof url === "string";
+  let cleanUrl = url;
+  try {
+    if (!isString) isString = Object.prototype.toString.call(url) === "[object String]";
+    if (isString) cleanUrl = String(url).trim();
+  } catch (e) {
+    isString = false; // a throwing Symbol.toStringTag or toString: not a usable URL
+  }
 
-  log("info", `${method} ${cleanUrl}`);
+  log("info", `${method} ${printable(cleanUrl)}`);
   if (!isString) return;
   latestUrl = cleanUrl;
 
@@ -504,6 +531,7 @@ module.exports = {
   logUrl,
   logEnvVar,
   logResource: function (resourceName, emulatedPath, content) {
+    resourceName = safeResultName(resourceName);
     // Writing a Blob?
     if (content && content.constructor && content.constructor.name == "Blob") {
       // Grab the actual contents as a byte string.

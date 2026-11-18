@@ -197,3 +197,40 @@ describe("hostile names and shapes", function() {
 		}
 	});
 });
+
+describe("sample-chosen file names", function() {
+	this.timeout(90000);
+
+	it("cannot overwrite an index file or leave the results dir", function() {
+		const run = runSample(
+			"lib.logResource(\"resources.json\", \"C:\\\\a.exe\", \"MZpayload\");\n" +
+			"lib.logResource(\"../escaped.txt\", \"C:\\\\b.txt\", \"out\");\n" +
+			"lib.logSnippet(\"IOC.json\", {as: \"x\"}, \"clobber\");\n"
+		);
+		try {
+			const resources = run.read("resources.json");
+			assert.ok(!Array.isArray(resources) && typeof resources === "object");
+			const paths = Object.values(resources).map((r) => r.path).sort();
+			assert.deepStrictEqual(paths, ["C:\\a.exe", "C:\\b.txt"]);
+			assert.ok(!fs.existsSync(path.join(run.work, "escaped.txt")), "wrote outside the results dir");
+			assert.ok(Array.isArray(run.read("IOC.json")), "IOC.json clobbered");
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+
+	it("survives a String whose toStringTag getter throws, and an unprintable URL", function() {
+		const run = runSample(
+			"var u = new String(\"http://evil.example/p\");\n" +
+			"Object.defineProperty(u, Symbol.toStringTag, {get: function(){ throw new Error(\"stop\"); }});\n" +
+			"InstallProduct(u);\n" +
+			"InstallProduct({toString: function(){ throw new Error(\"boom\"); }});\n" +
+			"InstallProduct(\"http://after.example/q\");\n"
+		);
+		try {
+			assert.ok(run.read("urls.json").includes("http://after.example/q"));
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+});

@@ -88,10 +88,13 @@ const notStringObjects = new WeakSet();
 function stringObjectValue(value) {
   if (!value || typeof value !== "object") return undefined;
   if (notStringObjects.has(value)) return undefined;
+  // Only a TypeError means "no [[StringData]]"; anything else (a stack overflow the sample
+  // arranged) says nothing, and must not cache a real String object as not one.
+  let definite = true;
   try {
     return String.prototype.valueOf.call(value);
   } catch (e) {
-    // not a host-realm String object
+    if (!(e instanceof TypeError)) definite = false;
   }
   for (const valueOf of stringRealms.list()) {
     try {
@@ -100,13 +103,15 @@ function stringObjectValue(value) {
       const primitive = Reflect.apply(valueOf, value, []);
       if (typeof primitive === "string") return primitive;
     } catch (e) {
-      // not a String object of that realm
+      if (!(e instanceof TypeError)) definite = false;
     }
   }
-  try {
-    notStringObjects.add(value);
-  } catch (e) {
-    // not weakly holdable
+  if (definite) {
+    try {
+      notStringObjects.add(value);
+    } catch (e) {
+      // not weakly holdable
+    }
   }
   return undefined;
 }

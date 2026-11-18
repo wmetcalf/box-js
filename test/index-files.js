@@ -482,3 +482,18 @@ describe("decode IOC out", function() {
 		}
 	});
 });
+
+describe("fallback VM String capture", function() {
+	this.timeout(90000);
+
+	it("ignores a String global planted before the no-rewrite fallback", function() {
+		const run = runSample(fs.readFileSync(path.join(__dirname, "fixtures", "fallback-plant.js"), "utf8"));
+		try {
+			assert.deepStrictEqual(run.read("urls.json"), ["http://evil.example/gate.php"]);
+			const res = Object.values(run.read("resources.json"));
+			assert.deepStrictEqual(res.map((r) => r.path), ["C:\\Users\\Public\\a.exe"]);
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+});

@@ -497,3 +497,23 @@ describe("fallback VM String capture", function() {
 		}
 	});
 });
+
+describe("index maps survive an unserializable entry", function() {
+	this.timeout(90000);
+
+	it("keeps rewriting resources.json and snippets.json", function() {
+		const run = runSample(
+			"var p = {}; Object.defineProperty(p, \"x\", {enumerable: true, get: function () { throw new Error(\"no\"); }});\n" +
+			"try { lib.logResource(\"bad\", p, \"x\"); } catch (e) {}\n" +
+			"try { lib.logSnippet(\"bads\", {as: p}, \"x\"); } catch (e) {}\n" +
+			"lib.logResource(\"good\", \"C:\\\\payload.exe\", \"MZ\");\n" +
+			"lib.logSnippet(\"goods\", {as: \"x\"}, \"y\");\n"
+		);
+		try {
+			assert.strictEqual(run.read("resources.json").good.path, "C:\\payload.exe");
+			assert.deepStrictEqual(run.read("snippets.json").goods, {as: "x"});
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+});

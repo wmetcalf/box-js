@@ -211,14 +211,34 @@ function printable(value) {
   }
 }
 
+// snippets.json and resources.json are written from each entry's JSON, taken when it is
+// recorded (as IOC.json is), so one entry that cannot be serialized (a sample-supplied path
+// with a throwing getter, very deep nesting) cannot stop later rewrites.
+const snippetSnapshots = Object.create(null);
+const resourceSnapshots = Object.create(null);
+
+function snapshotEntry(value) {
+  try {
+    const json = simpleStringify(value, null, "\t");
+    return json === undefined ? "null" : json;
+  } catch (e) {
+    return JSON.stringify(`<unserializable: ${errorText(e)}>`);
+  }
+}
+
+// The same layout simpleStringify(map, null, "\t") wrote.
+function writeIndexMap(name, entries) {
+  const keys = Object.keys(entries);
+  const body = keys.map((k) => "\t" + JSON.stringify(k) + ": " + entries[k].replace(/\n/g, "\n\t"));
+  fs.writeFileSync(path.join(directory, name), keys.length ? "{\n" + body.join(",\n") + "\n}" : "{}");
+}
+
 const logSnippet = function (filename, logContent, content) {
   filename = safeResultName(filename);
   snippets[filename] = logContent;
+  snippetSnapshots[filename] = snapshotEntry(logContent);
   fs.writeFileSync(path.join(directory, filename), "" + content);
-  fs.writeFileSync(
-    path.join(directory, "snippets.json"),
-    simpleStringify(snippets, null, "\t")
-  );
+  writeIndexMap("snippets.json", snippetSnapshots);
 };
 
 // SECURITY FIX: Enhanced error handling with controlled termination
@@ -710,10 +730,8 @@ module.exports = {
       logIOC("NewResource", resource, "The script created a resource.");
       // Record before writing, or resources.json always lags one resource behind.
       resources[resourceName] = resource;
-      fs.writeFileSync(
-        path.join(directory, "resources.json"),
-        simpleStringify(resources, null, "\t")
-      );
+      resourceSnapshots[resourceName] = snapshotEntry(resource);
+      writeIndexMap("resources.json", resourceSnapshots);
     }
   },
   logSnippet,

@@ -135,3 +135,16 @@ describe("index file hardening", function() {
 		}
 	});
 });
+
+describe("sparse arrays", function() {
+	this.timeout(90000);
+
+	it("does not materialize a huge sparse array", function() {
+		const run = runSample("var a = []; a[4294967294] = \"x\"; lib.logSnippet(\"s.js\", {as: a}, \"\");\n");
+		try {
+			assert.deepStrictEqual(run.read("snippets.json")["s.js"], {as: {"4294967294": "x"}});
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+});

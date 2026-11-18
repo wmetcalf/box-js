@@ -2792,7 +2792,7 @@ if (argv["dangerous-vm"]) {
     sandbox,
   });
   // Captured before the sample runs; see string-realms.js.
-  stringRealms.register(vm.run("String.prototype.valueOf"));
+  stringRealms.register(vm.run('"".valueOf'));
 
   // Fake cscript.exe style ReferenceError messages.
   code =
@@ -2915,7 +2915,7 @@ if (argv["dangerous-vm"]) {
           timeout: (argv.timeout || 10) * 1000,
           sandbox,
         });
-        stringRealms.register(fallbackVm.run("String.prototype.valueOf"));
+        stringRealms.register(fallbackVm.run('"".valueOf'));
         fallbackVm.run(originalCode);
         lib.info("Fallback execution successful");
         return;
@@ -2955,7 +2955,7 @@ if (argv["dangerous-vm"]) {
           timeout: (argv.timeout || 10) * 1000,
           sandbox,
         });
-        stringRealms.register(fallbackVm.run("String.prototype.valueOf"));
+        stringRealms.register(fallbackVm.run('"".valueOf'));
 
         fallbackVm.run(originalCode);
         lib.info("Fallback execution successful");

@@ -80,11 +80,14 @@ function errorText(e) {
   }
 }
 
+// Objects already found not to be String objects ([[StringData]] is fixed at creation), so
+// the map rewrites (snippets.json, resources.json) do not re-run the realm checks per entry.
+const notStringObjects = new WeakSet();
+
 // The primitive inside a String object (host or sandbox realm), or undefined.
 function stringObjectValue(value) {
   if (!value || typeof value !== "object") return undefined;
-  // No toStringTag pre-filter: a real String object may set its own tag. Each IOC value is
-  // serialized once, when it is logged, so the slot checks below are cheap enough.
+  if (notStringObjects.has(value)) return undefined;
   try {
     return String.prototype.valueOf.call(value);
   } catch (e) {
@@ -92,16 +95,36 @@ function stringObjectValue(value) {
   }
   for (const valueOf of stringRealms.list()) {
     try {
-      const primitive = valueOf.call(value);
+      // Reflect.apply: `valueOf.call` would go through the sandbox's Function.prototype.call,
+      // which the sample can patch.
+      const primitive = Reflect.apply(valueOf, value, []);
       if (typeof primitive === "string") return primitive;
     } catch (e) {
       // not a String object of that realm
     }
   }
+  try {
+    notStringObjects.add(value);
+  } catch (e) {
+    // not weakly holdable
+  }
   return undefined;
 }
 
+// A String object as its string, a BigInt as its decimal digits (JSON.stringify throws on
+// one); anything else unchanged.
+function normalizeValue(value) {
+  if (value && typeof value === "object") {
+    const unboxed = stringObjectValue(value);
+    if (unboxed !== undefined) return unboxed;
+  } else if (typeof value === "bigint") {
+    return value.toString();
+  }
+  return value;
+}
+
 function simpleStringify(object, a, b) {
+  object = normalizeValue(object);
   if (object && typeof object === "object") {
     const tmpObject = copyWithoutCircularReferences([object], object);
     // Name-keyed maps (snippets.json, resources.json) stay maps and arrays stay arrays.
@@ -142,12 +165,7 @@ function simpleStringify(object, a, b) {
     }
     Object.keys(object).forEach(function (key) {
       var value = object[key];
-      if (value && typeof value === "object") {
-        var unboxed = stringObjectValue(value);
-        if (unboxed !== undefined) value = unboxed; // a String object (a URL), not a char map
-      } else if (typeof value === "bigint") {
-        value = value.toString(); // JSON.stringify throws on a BigInt
-      }
+      value = normalizeValue(value); // a String object (a URL), not a char map; a BigInt
       if (value && typeof value === "object") {
         if (references.indexOf(value) < 0) {
           references.push(value);
@@ -306,12 +324,12 @@ function logIOC(type, value, description) {
       }
     }
 
-    // Add to IOC collection
-    IOC.push({ type, value, description });
     const fields = [["type", snapshot(type)], ["value", valueJson], ["description", snapshot(description)]]
       .filter(([, json]) => json !== undefined)
       .map(([key, json]) => "\t\"" + key + "\": " + json.replace(/\n/g, "\n\t"));
     const entryJson = fields.length ? "{\n" + fields.join(",\n") + "\n}" : "{}";
+    // Push both together, after everything that can throw, so they stay index-aligned.
+    IOC.push({ type, value, description });
     IOCSnapshots.push({ valueJson, entryJson, out });
 
     // The same layout simpleStringify(IOC, null, "\t") wrote.

@@ -517,3 +517,26 @@ describe("index maps survive an unserializable entry", function() {
 		}
 	});
 });
+
+describe("string-realms registrar", function() {
+	it("can be claimed only once", function() {
+		const realms = require("../string-realms");
+		// analyze.js claims it at load; in this process nothing has, so claim it here.
+		realms.claimRegistrar();
+		assert.throws(() => realms.claimRegistrar(), /already claimed/);
+	});
+
+	it("is already claimed when the sample's host require reaches it", function() {
+		const run = runSample(
+			"var ok = \"no-require\";\n" +
+			"try { require(\"./string-realms\").claimRegistrar(); ok = \"claimed\"; } catch (e) { ok = String(e.message); }\n" +
+			"lib.logIOC(\"Claim\", {result: ok}, \"c\");\n"
+		);
+		try {
+			const r = run.read("IOC.json").find((e) => e.type === "Claim").value.result;
+			assert.notStrictEqual(r, "claimed");
+		} finally {
+			fs.rmSync(run.work, {recursive: true, force: true});
+		}
+	});
+});

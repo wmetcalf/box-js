@@ -288,11 +288,18 @@ app.get("/sample/:id/urls", async (req, res) => {
 });
 
 // resources.json and snippets.json are name-keyed maps. Analyses from before box-js wrote them
-// as maps hold a list of nulls (nothing recoverable); serve those as an empty map so every
-// response matches the documented schema.
+// as maps hold a list instead: entry i kept only for a file named "i" (mostly nulls). Serve
+// those as a map of the non-null entries keyed by index, so every response matches the
+// documented schema and nothing recoverable is lost.
 function indexMap(text) {
     try {
-	return Array.isArray(JSON.parse(text)) ? "{}" : text;
+	const parsed = JSON.parse(text);
+	if (!Array.isArray(parsed)) return text;
+	const map = {};
+	parsed.forEach((entry, i) => {
+	    if (entry !== null) map[String(i)] = entry;
+	});
+	return JSON.stringify(map, null, "\t");
     } catch (e) {
 	return text;
     }

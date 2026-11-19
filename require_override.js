@@ -20,9 +20,15 @@ function require(arg) {
 	"https" : {
 	    __name: "_https",
 	    request: function (url, options) {
+		if (url && typeof url === "object" && typeof url.href === "string") {
+		    // A URL object.
+		    return _http.request(url.href, options);
+		}
 		if (url && typeof url === "object" && typeof url.hostname !== "undefined") {
-		    const port = (typeof url.port !== "undefined" && String(url.port) !== "443") ? ":" + url.port : "";
-		    return _http.request("https://" + url.hostname + port + (url.path || ""), url);
+		    const p = url.port === undefined || url.port === null ? "" : String(url.port);
+		    const port = (p !== "" && p !== "443") ? ":" + p : "";
+		    const where = url.path || ((url.pathname || "") + (url.search || ""));
+		    return _http.request("https://" + url.hostname + port + where, url);
 		}
 		return _http.request(url, options);
 	    },

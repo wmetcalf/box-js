@@ -27,7 +27,7 @@ describe("conditional compilation (cc_on.js)", function() {
 		assert.strictEqual(run("@if (1) f(@_jscript, @nope); @end").out, "f(true, @nope);");
 	});
 	it("takes an unevaluable condition as false and says so", function() {
-		for (const c of ["__boxjs_cc__win32", "__has_include(\"/etc/passwd\")", "__has\\u005finclude(\"/etc/passwd\")",
+		for (const c of ["__boxjs_cc__win32", "__boxjs\\u005fcc__win32", "__has_include(\"/etc/passwd\")", "__has\\u005finclude(\"/etc/passwd\")",
 			"require('fs')", "(function(){})()", "x = 1", "this"]) {
 			const r = run(`@if (${c}) A(); @else B(); @end`);
 			assert.strictEqual(r.out, "B();", c);
@@ -51,6 +51,7 @@ describe("conditional compilation (cc_on.js)", function() {
 	});
 	it("treats undefined variables as NaN, as JScript does", function() {
 		assert.strictEqual(run("@if (@nope != @nope) A(); @else B(); @end").out, "A();");
+		assert.strictEqual(run("@if (!@__boxjs_cc_z) A(); @else B(); @end").out, "A();");
 		assert.strictEqual(run("@if (@_win16) A(); @else B(); @end").out, "B();");
 	});
 	it("keeps @set to numbers and booleans and bounds strings", function() {
@@ -132,6 +133,9 @@ describe("conditional compilation (cc_on.js)", function() {
 			// A later quote on the line would close a misread literal over the directives.
 			["if (x) /\"/.test(y); @if (@_win32) A(); @end var s = \"z\";", "if (x) /\"/.test(y); A(); var s = \"z\";"],
 			["var half = n-- / 2; @if (@_win32) A(); @end var u = \"http://x/\";", "var half = n-- / 2; A(); var u = \"http://x/\";"],
+			// A regex opener inside an earlier unclosed scan (where it sat in a class).
+			["var o = {} / [/@if (0) x/, [R()], [/@end a/]];", "var o = {} / [/@if (0) x/, [R()], [/@end a/]];"],
+			["var o = {} / [/\"/]; @if (@_win32) A(); @end var s = \"z\";", "var o = {} / [/\"/]; A(); var s = \"z\";"],
 			["x = 1\r// c\r@if (@_win32)\rA();\r@end\r", "x = 1 // c A();"],
 			["x = 1;\n// @note run with `cscript\n@if (@_win32)\nA();\n@end\n", "x = 1; // @note run with `cscript A();"],
 		];

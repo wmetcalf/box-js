@@ -15,8 +15,21 @@ function require(arg) {
 	    exec: _execSync,
 	},
 	"http" : _http,
-	// https used to fall through to the real module; give it the same stub as http.
-	"https" : _http,
+	// https used to fall through to the real module; the http stub, with the URL logged
+	// as https (the http stub builds "http://" from an options object).
+	"https" : {
+	    __name: "_https",
+	    request: function (url, options) {
+		if (url && typeof url === "object" && typeof url.hostname !== "undefined") {
+		    const port = (typeof url.port !== "undefined" && String(url.port) !== "443") ? ":" + url.port : "";
+		    return _http.request("https://" + url.hostname + port + (url.path || ""), url);
+		}
+		return _http.request(url, options);
+	    },
+	    get: function (url, headers) {
+		return _http.get(url, headers);
+	    },
+	},
         "net" : {
             createConnection: _createConnection,
             Socket: _Socket,

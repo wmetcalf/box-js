@@ -9,6 +9,7 @@
 // whitelist of operators, literals and @variables. No process is started.
 
 const acorn = require("acorn");
+const crypto = require("crypto");
 
 // Undefined variables (including _win16, _mac, ...) are NaN, as in JScript.
 // The values cscript.exe/wscript.exe report on 32-bit Windows (the C preprocessor
@@ -199,13 +200,17 @@ function codeMask(text) {
       i += 2;
       continue;
     }
-    if (c === "/" && i > noClose["/"] &&
-        (prev === "" || REGEX_AFTER.test(prev) || (isWord(prev) && REGEX_KEYWORDS.has(word)))) {
+    if (c === "/" && (prev === "" || REGEX_AFTER.test(prev) || (isWord(prev) && REGEX_KEYWORDS.has(word)))) {
       // A regex that does not close on its line is a division after all.
       let k = i + 1;
       let inClass = false;
       let closed = false;
+      // Inside an earlier unclosed scan's range (this "/" was in a class there), scan only
+      // to the first "/" or bracket: a "/" closes it, a bracket means this scan has caught
+      // up with the unclosed one and will not close either. Keeps such lines linear.
+      const cached = i <= noClose["/"];
       while (k < n && !isNewline(text[k])) {
+        if (cached && (text[k] === "[" || text[k] === "]")) break;
         const d = text[k];
         if (d === "\\") {
           k += 2;
@@ -219,7 +224,7 @@ function codeMask(text) {
         }
         k++;
       }
-      if (!closed) noClose["/"] = k;
+      if (!closed) noClose["/"] = Math.max(noClose["/"], k);
       if (closed) {
         k++;
         while (k < n && /[a-z]/i.test(text[k])) k++;
@@ -270,9 +275,10 @@ function lookup(vars, name) {
 
 // Evaluate a condition/@set expression. Anything outside the whitelist is an error.
 function evaluate(text, vars) {
-  // The marker prefix is box-js's own: a condition that spells it is not a variable.
-  if (text.includes("__boxjs_cc_")) throw new Error("reserved identifier");
-  const source = text.replace(/@([A-Za-z_$][\w$]*)/g, "__boxjs_cc_$1");
+  // @name becomes an identifier with a prefix the sample cannot know (fresh per call), so
+  // no identifier the condition spells itself, escaped or not, reads a variable.
+  const prefix = "__boxjs_cc_" + crypto.randomBytes(8).toString("hex") + "_";
+  const source = text.replace(/@([A-Za-z_$][\w$]*)/g, (m, name) => prefix + name);
   const ast = acorn.parse("(" + source + "\n)", {ecmaVersion: 2020});
   if (ast.body.length !== 1 || ast.body[0].type !== "ExpressionStatement") {
     throw new Error("not a single expression");
@@ -285,7 +291,7 @@ function evaluate(text, vars) {
       if (node.regex || typeof node.value === "bigint") throw new Error("unsupported literal");
       return node.value;
     case "Identifier":
-      if (node.name.startsWith("__boxjs_cc_")) return lookup(vars, node.name.slice(11));
+      if (node.name.startsWith(prefix)) return lookup(vars, node.name.slice(prefix.length));
       if (node.name === "undefined") return undefined;
       if (node.name === "NaN") return NaN;
       if (node.name === "Infinity") return Infinity;

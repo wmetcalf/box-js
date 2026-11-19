@@ -40,10 +40,28 @@ describe("conditional compilation (cc_on.js)", function() {
 	});
 	it("leaves string literals alone", function() {
 		assert.strictEqual(run("var note = \"@set probe\"; var answer = 42;").out, "var note = \"@set probe\"; var answer = 42;");
-		assert.strictEqual(run("@if (1) var d = \"user@_win32.example\", e = '@end'; f(@_win32); @end").out,
-			"var d = \"user@_win32.example\", e = '@end'; f(true);");
+		assert.strictEqual(run("@if (1) var d = \"user@_win32.example\"; f(@_win32); @end").out,
+			"var d = \"user@_win32.example\"; f(true);");
+		// A quote in a regex does not hide directives (they are found as text, as before)
+		// and the branch is still taken.
+		assert.strictEqual(run("q = q.replace(/'/g, \"\"); @if (@_win32) A(@_win32); @end\nB(@_win32);").out,
+			"q = q.replace(/'/g, \"\"); A(true); B(true);");
 		// A quote in a // comment only affects its own line.
 		assert.strictEqual(run("// don't\n@if (0) A(); @else B(); @end").out, "// don't B();");
+	});
+	it("treats undefined variables as NaN, as JScript does", function() {
+		assert.strictEqual(run("@if (@nope != @nope) A(); @else B(); @end").out, "A();");
+		assert.strictEqual(run("@if (@_win16) A(); @else B(); @end").out, "B();");
+	});
+	it("keeps @set to numbers and booleans and bounds strings", function() {
+		const r = run("@set @a = \"x\"\n@if (@a == \"x\") A(); @else B(); @end");
+		assert.strictEqual(r.out, "B();");
+		assert.strictEqual(r.warnings.length, 1);
+		const big = "\"" + "y".repeat(3000) + "\"";
+		const r2 = run(`@if ((${big} + ${big}).length) A(); @else B(); @end`);
+		assert.strictEqual(r2.out, "B();");
+		const huge = "@if (" + Array(20000).fill("1").join("+") + ") A(); @else B(); @end";
+		assert.strictEqual(run(huge).out, "B();"); // over the step cap
 	});
 	it("starts no process", function() {
 		const names = ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork"];

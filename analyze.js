@@ -157,12 +157,6 @@ if (argv["activex-as-ioc"]) {
   }
 */
 
-function lacksBinary(name) {
-  const path = child_process.spawnSync("command", ["-v", name], {
-    shell: true,
-  }).stdout;
-  return path.length === 0;
-}
 
 function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); // $& means the whole matched string
@@ -907,9 +901,13 @@ function rewrite(code, useException=false) {
                 .replace(/@cc_on/gi, "")
                 .replace(/\/\*@/g, "\n").replace(/@\*\//g, "\n");
             // Evaluated in JS (cc_on.js); this used to run m4 and cpp on the sample.
-            if (/@(if|set)/i.test(code)) {
-                lib.info("    Replacing @cc_on statements (use --no-cc_on-rewrite to skip)...", false);
+            // Always, once @cc_on is seen: @_jscript_version etc. in plain code are
+            // substituted too. A failure keeps the source rather than analysing nothing.
+            lib.info("    Replacing @cc_on statements (use --no-cc_on-rewrite to skip)...", false);
+            try {
                 code = ccOn.preprocess(code, (msg) => lib.warning(msg));
+            } catch (e) {
+                lib.warning(`Conditional compilation failed (${e.message}); analysing the source without it`);
             }
         } else {
             lib.warn(

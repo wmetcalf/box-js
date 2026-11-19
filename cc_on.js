@@ -10,19 +10,23 @@
 
 const acorn = require("acorn");
 
+// Undefined variables (including _win16, _mac, ...) are NaN, as in JScript.
 // The values cscript.exe/wscript.exe report on 32-bit Windows (the C preprocessor
 // defines box-js used to pass, plus the version and build JScript 5.8 reports).
 const DEFAULT_VARS = Object.freeze({
   _jscript: true,
   _jscript_build: 18702,
   _jscript_version: 5.8,
-  _win16: false,
   _win32: true,
   _win64: true,
   _x86: true,
 });
 
 const DIRECTIVE = /@(if|elif|else|end|set)(?![\w$])/gi;
+const NAME = /[A-Za-z_$][\w$]*/y;
+// JScript's @set values are numbers and booleans. Strings are only allowed as literals
+// inside an expression, and bounded, so a sample cannot grow one across @set lines.
+const MAX_STRING = 4096;
 
 // The text of a balanced "( ... )" starting at code[i] (after blanks), or a condition up
 // to the end of the line when there is no parenthesis (cpp's reading of the old rewrite).
@@ -49,35 +53,8 @@ function readCondition(code, i) {
   return {text: code.slice(i), end: code.length};
 }
 
-// Whether code[idx] is inside a string literal, judged from the start of its line: JScript
-// leaves literals alone (an "@set" or "user@_win32.example" in a string is text). Strings do
-// not span lines, so a quote in a comment or regex can only mislead the rest of its own
-// line; a "//" comment is code for this purpose (that is where //@if lives), and a
-// "/* ... */" on the line is skipped.
-function inString(code, idx) {
-  let i = code.lastIndexOf("\n", idx - 1) + 1;
-  let quote = null;
-  while (i < idx) {
-    const c = code[i];
-    if (quote) {
-      if (c === "\\") i++;
-      else if (c === quote) quote = null;
-    } else if (c === "/" && code[i + 1] === "/") {
-      return false;
-    } else if (c === "/" && code[i + 1] === "*") {
-      const close = code.indexOf("*/", i + 2);
-      if (close < 0 || close >= idx) return false;
-      i = close + 1;
-    } else if (c === "\"" || c === "'" || c === "`") {
-      quote = c;
-    }
-    i++;
-  }
-  return quote !== null;
-}
-
 function lookup(vars, name) {
-  return Object.prototype.hasOwnProperty.call(vars, name) ? vars[name] : 0;
+  return Object.prototype.hasOwnProperty.call(vars, name) ? vars[name] : NaN;
 }
 
 // Evaluate a condition/@set expression. Anything outside the whitelist is an error.
@@ -113,6 +90,9 @@ function evaluate(text, vars) {
     case "BinaryExpression": {
       const a = ev(node.left);
       const b = ev(node.right);
+      if ((typeof a === "string" && a.length > MAX_STRING) || (typeof b === "string" && b.length > MAX_STRING)) {
+        throw new Error("string too long");
+      }
       switch (node.operator) {
       case "+": return a + b;
       case "-": return a - b;
@@ -154,18 +134,47 @@ function evaluate(text, vars) {
     }
   }
   const v = ev(ast.body[0].expression);
+  if (typeof v === "string" && v.length > MAX_STRING) throw new Error("string too long");
   // Only primitives come out (strings, numbers, booleans): nothing reaches the sandbox.
   return v;
 }
 
 // Replace @name in active code with the variable's value, as JScript does; unknown names
-// are left as they are.
+// and anything inside a string literal are left as they are. String state is tracked in
+// one forward pass and reset at each line end (strings do not span lines, so a quote in a
+// comment or regex can only mislead the rest of its own line); "//" and "/* */" on a line
+// are code here, since that is where //@ conditional comments live.
 function substitute(text, vars) {
-  return text.replace(/@([A-Za-z_$][\w$]*)/g, (m, name, offset) => {
-    if (!Object.prototype.hasOwnProperty.call(vars, name) || inString(text, offset)) return m;
-    const v = vars[name];
-    return typeof v === "string" ? JSON.stringify(v) : String(v);
-  });
+  let out = "";
+  let quote = null;
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "\n") {
+      quote = null;
+    } else if (quote) {
+      if (c === "\\" && text[i + 1] !== "\n") {
+        out += c + (text[i + 1] || "");
+        i += 2;
+        continue;
+      }
+      if (c === quote) quote = null;
+    } else if (c === "\"" || c === "'" || c === "`") {
+      quote = c;
+    } else if (c === "@") {
+      NAME.lastIndex = i + 1;
+      const m = NAME.exec(text);
+      if (m && Object.prototype.hasOwnProperty.call(vars, m[0])) {
+        const v = vars[m[0]];
+        out += typeof v === "number" && Number.isNaN(v) ? "NaN" : String(v);
+        i = NAME.lastIndex;
+        continue;
+      }
+    }
+    out += c;
+    i++;
+  }
+  return out;
 }
 
 // `code` has had /*@cc_on, @cc_on, /*@ and @*/ removed already. `warn` gets a message
@@ -188,7 +197,6 @@ function preprocess(code, warn = () => {}) {
   DIRECTIVE.lastIndex = 0;
   let m;
   while ((m = DIRECTIVE.exec(code)) !== null) {
-    if (inString(code, m.index)) continue;
     if (active()) out += substitute(code.slice(pos, m.index), vars);
     let next = m.index + m[0].length;
     const kind = m[1].toLowerCase();
@@ -224,9 +232,18 @@ function preprocess(code, warn = () => {}) {
       const stmt = code.slice(i, end);
       next = end;
       const sm = /^@([A-Za-z_$][\w$]*)\s*=([\s\S]*)$/.exec(stmt);
-      if (active() && sm) {
+      if (!sm) {
+        // Not "@set @name = ..." (e.g. "@set" in a string): plain text.
+        if (active()) out += m[0];
+        pos = m.index + m[0].length;
+        DIRECTIVE.lastIndex = pos;
+        continue;
+      }
+      if (active()) {
         try {
-          vars[sm[1]] = evaluate(sm[2], vars);
+          const v = evaluate(sm[2], vars);
+          if (typeof v !== "number" && typeof v !== "boolean") throw new Error("@set values are numbers or booleans");
+          vars[sm[1]] = v;
         } catch (e) {
           warn(`could not evaluate @set ${JSON.stringify(stmt.slice(0, 200))}: ${e.message}`);
         }

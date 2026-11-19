@@ -2492,6 +2492,148 @@ var _http = {
     },
 };
 
+// Emulated Node https module (require_override.js maps "https" here). https used to reach
+// the real module, whose requests in a network-less worker fail asynchronously (EAI_AGAIN,
+// then "close"), so the code around a beacon kept running. This keeps that: each request
+// is logged with the URL node would contact and returns an emitter that fails the same
+// way. Defined at global scope, so a sample's own top-level names cannot shadow what it uses.
+var _https = (function () {
+    const EventEmitter = require("events");
+    const str = (v) => (v === undefined || v === null) ? "" : String(v);
+    // Parsed by hand: the sandbox's URL is box-js's own emulation.
+    function parse(href) {
+	const m = /^([a-z][a-z0-9+.-]*:)\/\/(?:([^\/?#@]*)@)?(\[[^\]]*\]|[^\/?#:]*)(?::(\d*))?([^#]*)/i.exec(href);
+	return m ? {protocol: m[1].toLowerCase(), auth: m[2], hostname: m[3], port: m[4], path: m[5] || "/"} : null;
+    }
+    // node treats an object with href (and no path/auth of its own) as a URL; anything
+    // else, url.parse() output included, is an options object. boilerplate's own URL class
+    // keeps the address in .url.
+    function urlText(x) {
+	if (typeof x === "string") return x;
+	if (!x || typeof x !== "object") return null;
+	if (typeof x.href === "string" && x.path === undefined && x.auth === undefined) return x.href;
+	if (x.__name === "URL" && typeof x.url === "string") return x.url;
+	return null;
+    }
+    // The URL node would contact for request(a[, b]): b's options override a's.
+    function target(a, b) {
+	let o = {};
+	const t = urlText(a);
+	if (t !== null) {
+	    o = parse(t);
+	    if (!o) return t;
+	} else if (a && typeof a === "object") {
+	    b = a;
+	}
+	if (b && typeof b === "object" && b !== a || (b && typeof b === "object" && t === null)) {
+	    for (const k of ["protocol", "hostname", "host", "port", "path", "auth"]) {
+		if (b[k] !== undefined && b[k] !== null) o[k] = b[k];
+	    }
+	    if (o.path === undefined && (b.pathname !== undefined || b.search !== undefined)) {
+		o.path = str(b.pathname) + str(b.search);
+	    }
+	}
+	let host = str(o.hostname);
+	let port = str(o.port);
+	if (!host) {
+	    host = str(o.host);
+	    const hp = /^([^:\[\]]+):(\d+)$/.exec(host); // "name:port" in host
+	    if (hp) {
+		host = hp[1];
+		if (!port) port = hp[2];
+	    }
+	}
+	if (host.indexOf(":") >= 0 && host[0] !== "[") host = "[" + host + "]"; // IPv6
+	const protocol = str(o.protocol) || "https:";
+	const dflt = protocol === "http:" ? "80" : "443";
+	const auth = str(o.auth) ? str(o.auth) + "@" : "";
+	return protocol + "//" + auth + (host || "localhost") + (port && port !== dflt ? ":" + port : "") +
+	    (str(o.path) || "/");
+    }
+    function fakeRequest(method, a, b, callback) {
+	if (typeof b === "function") {
+	    callback = b;
+	    b = undefined;
+	}
+	const where = target(a, b);
+	logIOC("https." + method + "()", {url: where, options: (b && typeof b === "object") ? b : a},
+	       "The script made a web request with https." + method + "().");
+	lib.logUrl("https." + method + "()", where);
+	const req = new EventEmitter();
+	let failed = false;
+	let delivered = false;
+	const pendingCallbacks = [];
+	const error = () => {
+	    const err = new Error("getaddrinfo EAI_AGAIN " + where);
+	    err.code = "EAI_AGAIN";
+	    return err;
+	};
+	// Delivered when the failure has happened and someone listens: a listener attached
+	// after an await still gets it, as with a real lookup that fails later.
+	const deliver = () => {
+	    if (!failed) return;
+	    while (pendingCallbacks.length) {
+		try { pendingCallbacks.shift()(error()); } catch (e) {}
+	    }
+	    if (delivered || req.listenerCount("error") === 0) return;
+	    delivered = true;
+	    req.emit("error", error());
+	    req.emit("close");
+	};
+	for (const m of ["on", "once", "addListener", "prependListener", "prependOnceListener"]) {
+	    const add = req[m];
+	    req[m] = function (name) {
+		const r = add.apply(req, arguments);
+		if (failed && (name === "error" || name === "close")) Promise.resolve().then(() => {
+		    if (name === "close" && delivered === false && req.listenerCount("error") === 0) {
+			delivered = true;
+			req.emit("close");
+		    } else deliver();
+		});
+		return r;
+	    };
+	}
+	// write(data[, encoding][, cb]) / end([data][, encoding][, cb]): the callback gets the
+	// failure, as node calls it with an error when the socket never connected.
+	const withCallback = function () {
+	    const cb = Array.prototype.slice.call(arguments).reverse().find((x) => typeof x === "function");
+	    if (cb) {
+		pendingCallbacks.push(cb);
+		if (failed) Promise.resolve().then(deliver);
+	    }
+	    return req;
+	};
+	req.write = withCallback;
+	req.end = withCallback;
+	for (const m of ["setTimeout", "setHeader", "removeHeader", "destroy", "abort", "setNoDelay",
+			 "setSocketKeepAlive", "flushHeaders", "cork", "uncork"]) {
+	    req[m] = function () { return req; };
+	}
+	req.getHeader = function () { return undefined; };
+	Promise.resolve().then(() => {
+	    failed = true;
+	    deliver();
+	    if (!delivered && req.listenerCount("close") > 0 && req.listenerCount("error") === 0) {
+		// Without an "error" listener node would throw; a "close" listener still ran first.
+		delivered = true;
+		req.emit("close");
+	    }
+	});
+	return req;
+    }
+    function Agent(options) {
+	this.options = options || {};
+	this.destroy = function () {};
+    }
+    return {
+	__name: "_https",
+	request: (a, b, cb) => fakeRequest("request", a, b, cb),
+	get: (a, b, cb) => fakeRequest("get", a, b, cb),
+	Agent: Agent,
+	globalAgent: new Agent(),
+    };
+})();
+
 // Stubbed Node socket.io-client function.
 function _io_client(url) {
     logIOC('socket.io-client()', {url: url}, "The script opened a socket with socket.io-client().");

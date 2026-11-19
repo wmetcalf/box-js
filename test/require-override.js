@@ -30,6 +30,14 @@ describe("require_override stubs", function() {
 			// A promise-wrapped request settles through the emulated "error".
 			"new Promise(function (res, rej) { var r = require(\"https\").request({host: \"hostopt.example:8443\", path: \"/p\"}); r.on(\"error\", rej); r.end(); })",
 			"  .catch(function () { require(\"child_process\").execSync(\"after rejection\"); });",
+			"(async function () { var r = require(\"https\").request(\"https://[::1]:8443/late\"); r.end(); await null; await null;",
+			"  await new Promise(function (res, rej) { r.on(\"error\", rej); }).catch(function () { require(\"child_process\").execSync(\"late listener\"); }); })();",
+			"const lib = {tag: 1};", // a sample's own top-level name must not break the emulation
+			"new Promise(function (res) { var r = require(\"https\").request(\"https://close.example/\"); r.on(\"error\", function () {}); r.on(\"close\", res); r.end(\"x\"); })",
+			"  .then(function () { require(\"child_process\").execSync(\"after close\"); });",
+			"require(\"https\").request(\"https://cb.example/\").write(\"d\", function (err) { if (err) require(\"child_process\").execSync(\"write callback\"); });",
+			"var parsed = require(\"url\").parse(\"https://template.example/api\"); parsed.hostname = \"dga.example\"; parsed.host = \"dga.example\";",
+			"require(\"https\").get(parsed).on(\"error\", function () {});",
 			"var agent = new (require(\"https\").Agent)({rejectUnauthorized: false});",
 			"var g = require(\"https\").get(new URL(\"https://get.example/g?x=1\"), function () {}); g.on(\"error\", function () {}); g.setTimeout(5000, function () { g.destroy(); });",
 			"require(\"https\").request(\"https://decoy.example/\", {hostname: \"real.example\", path: \"/c2\", agent: agent}, function () {}).end();",
@@ -50,13 +58,22 @@ describe("require_override stubs", function() {
 	it("logs https requests with the URL node would contact", function() {
 		assert.deepStrictEqual(urls, ["https://tls.example/a", "https://tls2.example:8443/b",
 			"https://c2.example/payload?a=1", "https://tls3.example/c?q", "https://beacon.example/c",
-			"https://hostopt.example:8443/p", "https://get.example/g?x=1", "https://real.example/c2"]);
+			"https://hostopt.example:8443/p", "https://[::1]:8443/late", "https://close.example/",
+			"https://cb.example/", "https://dga.example/api", "https://get.example/g?x=1", "https://real.example/c2"]);
 	});
 	it("keeps analysing after an https request", function() {
 		assert(iocs.some((i) => i.value && i.value.command === "after beacon"), JSON.stringify(iocs.map((i) => i.type)));
 	});
 	it("rejects a promise-wrapped request through its error listener", function() {
 		assert(iocs.some((i) => i.value && i.value.command === "after rejection"), JSON.stringify(iocs.map((i) => i.type)));
+	});
+	it("delivers the error to a listener attached later", function() {
+		assert(iocs.some((i) => i.value && i.value.command === "late listener"), JSON.stringify(iocs.map((i) => i.type)));
+	});
+	it("emits close and calls write callbacks after the failure", function() {
+		for (const c of ["after close", "write callback"]) {
+			assert(iocs.some((i) => i.value && i.value.command === c), c);
+		}
 	});
 	it("gives node:-prefixed ids the same stub", function() {
 		assert(iocs.some((i) => i.value && i.value.command === "whoami /all"), JSON.stringify(iocs.map((i) => i.type)));

@@ -247,7 +247,12 @@ function codeMask(text) {
 // The text of a balanced "( ... )" starting at code[i] (after blanks), or a condition up
 // to the end of the line when there is no parenthesis (cpp's reading of the old rewrite).
 function readCondition(code, i) {
-  while (i < code.length && /[ \t]/.test(code[i])) i++;
+  // Blank space, line breaks included, may come before the "(" (master's rewrite took
+  // /@if\s*/); without a "(" the condition runs to the end of its own line.
+  let j = i;
+  while (j < code.length && /\s/.test(code[j])) j++;
+  if (code[j] === "(") i = j;
+  else while (i < code.length && /[ \t]/.test(code[i])) i++;
   if (code[i] !== "(") {
     const eol = code.indexOf("\n", i);
     const end = eol < 0 ? code.length : eol;

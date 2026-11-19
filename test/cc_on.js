@@ -17,6 +17,10 @@ describe("conditional compilation (cc_on.js)", function() {
 		assert.strictEqual(run("@if (@_jscript_version >= 5.5) A(); @else B(); @end").out, "A();");
 		assert.strictEqual(run("@if (@_jscript_version < 5) A(); @else B(); @end").out, "B();");
 	});
+	it("accepts a line break before the condition", function() {
+		assert.strictEqual(run("@if\n(@_win32)\nA();\n@else\nB();\n@end").out, "A();");
+		assert.strictEqual(run("@if (0) A(); @elif\r\n  (@_win32) C(); @end").out, "C();");
+	});
 	it("handles @elif, nesting and @set", function() {
 		assert.strictEqual(run("@if (@_win16) A(); @elif (@_win32) B(); @else C(); @end").out, "B();");
 		assert.strictEqual(run("@if (1) X(); @if (0) Y(); @else Z(); @end W(); @end").out, "X(); Z(); W();");

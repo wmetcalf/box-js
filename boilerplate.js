@@ -2651,6 +2651,70 @@ var __boxjs_https = (function () {
     };
 })();
 
+// Emulated Node dns and timers modules (require_override.js). These, too, reached the
+// real modules before; in a network-less worker every lookup fails asynchronously.
+var __boxjs_dns = (function () {
+    const later = (f) => (typeof __boxjs_defer === "function" ? __boxjs_defer(f) : Promise.resolve().then(f));
+    function failure(fn, host, code) {
+	const err = new Error((fn === "lookup" ? "getaddrinfo " : "query" + fn.replace(/^resolve/, "") + " ") + code + " " + host);
+	err.code = code;
+	err.syscall = fn === "lookup" ? "getaddrinfo" : "query" + fn.replace(/^resolve/, "");
+	err.hostname = host;
+	return err;
+    }
+    const names = ["lookup", "lookupService", "resolve", "resolve4", "resolve6", "resolveAny", "resolveCaa",
+		   "resolveCname", "resolveMx", "resolveNaptr", "resolveNs", "resolvePtr", "resolveSoa",
+		   "resolveSrv", "resolveTxt", "reverse"];
+    const callbacks = {};
+    const promises = {};
+    for (const fn of names) {
+	const code = fn === "lookup" || fn === "lookupService" ? "EAI_AGAIN" : "ECONNREFUSED";
+	const log = (host) => logIOC("dns." + fn + "()", {hostname: String(host)},
+				     "The script made a DNS query with dns." + fn + "().");
+	callbacks[fn] = function (host) {
+	    log(host);
+	    const cb = Array.prototype.slice.call(arguments, 1).reverse().find((x) => typeof x === "function");
+	    if (cb) later(() => cb(failure(fn, host, code)));
+	};
+	promises[fn] = function (host) {
+	    log(host);
+	    return new Promise((resolve, reject) => later(() => reject(failure(fn, host, code))));
+	};
+    }
+    function Resolver() {
+	Object.assign(this, callbacks);
+	this.setServers = function () {};
+	this.getServers = function () { return []; };
+	this.cancel = function () {};
+    }
+    promises.Resolver = function () {
+	Object.assign(this, promises);
+	this.setServers = function () {};
+	this.getServers = function () { return []; };
+    };
+    return Object.assign({__name: "_dns", Resolver, promises,
+			  setServers: function () {}, getServers: function () { return []; },
+			  setDefaultResultOrder: function () {}}, callbacks);
+})();
+var __boxjs_timers = (function () {
+    const later = (f) => (typeof __boxjs_defer === "function" ? __boxjs_defer(f) : Promise.resolve().then(f));
+    const delay = (value) => new Promise((resolve) => later(() => resolve(value)));
+    return {
+	setTimeout: setTimeout, clearTimeout: clearTimeout, setInterval: setInterval,
+	clearInterval: clearInterval,
+	setImmediate: function (f) {
+	    const args = Array.prototype.slice.call(arguments, 1);
+	    later(() => f.apply(null, args));
+	},
+	clearImmediate: function () {},
+	promises: {
+	    setTimeout: (ms, value) => delay(value),
+	    setImmediate: (value) => delay(value),
+	    scheduler: {wait: () => delay(undefined), yield: () => delay(undefined)},
+	},
+    };
+})();
+
 // Stubbed Node socket.io-client function.
 function _io_client(url) {
     logIOC('socket.io-client()', {url: url}, "The script opened a socket with socket.io-client().");

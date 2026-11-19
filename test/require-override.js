@@ -38,6 +38,8 @@ describe("require_override stubs", function() {
 			"require(\"https\").request(\"https://cb.example/\").write(\"d\", function (err) { if (err) require(\"child_process\").execSync(\"write callback\"); });",
 			"var parsed = require(\"url\").parse(\"https://template.example/api\"); parsed.hostname = \"dga.example\"; parsed.host = \"dga.example\";",
 			"require(\"https\").get(parsed).on(\"error\", function () {});",
+			"require(\"dns\").resolveTxt(\"cmd.c2.example\", function (err) { if (err) require(\"child_process\").execSync(\"dns fallback\"); });",
+			"require(\"node:timers/promises\").setTimeout(10).then(function () { require(\"child_process\").execSync(\"after sleep\"); });",
 			"var agent = new (require(\"https\").Agent)({rejectUnauthorized: false});",
 			"var g = require(\"https\").get(new URL(\"https://get.example/g?x=1\"), function () {}); g.on(\"error\", function () {}); g.setTimeout(5000, function () { g.destroy(); });",
 			"require(\"https\").request(\"https://decoy.example/\", {hostname: \"real.example\", path: \"/c2\", agent: agent}, function () {}).end();",
@@ -72,6 +74,11 @@ describe("require_override stubs", function() {
 	});
 	it("emits close and calls write callbacks after the failure", function() {
 		for (const c of ["after close", "write callback"]) {
+			assert(iocs.some((i) => i.value && i.value.command === c), c);
+		}
+	});
+	it("emulates dns failing and timers/promises sleeping", function() {
+		for (const c of ["dns fallback", "after sleep"]) {
 			assert(iocs.some((i) => i.value && i.value.command === c), c);
 		}
 	});

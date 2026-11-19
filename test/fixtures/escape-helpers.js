@@ -30,7 +30,7 @@ function useReq(name, r) {
   var real = {
     vm: "runInThisContext", module: "createRequire", worker_threads: "Worker", inspector: "Session",
     v8: "setFlagsFromString", net: "isIP", http: "globalAgent", https: "createServer",
-    dgram: "createSocket", dns: "lookup", tls: "connect", zlib: "createInflate",
+    dgram: "createSocket", dns: "ADDRCONFIG", tls: "connect", zlib: "createInflate",
     child_process: "execFileSync", fs: "openSync", os: "setPriority",
   };
   Object.keys(real).forEach(function (m) {

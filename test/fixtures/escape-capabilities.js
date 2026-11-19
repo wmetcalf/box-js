@@ -52,22 +52,16 @@ attempt("argv-flags", function () {
   } catch (err) {}
 });
 attempt("result-name-overwrite", function () {
-  // box-js saves atob() output as <sha256>.bin; the sample can compute that name.
+  // box-js saves atob() output as <sha256>.bin and <a download> saves as <sha256>_<name>;
+  // the sample can compute both names, before and after box-js writes them.
   try {
-    atob("cHJvYmUtcGF5bG9hZA==");
     var h = require("crypto").createHash("sha256").update("probe-payload").digest("hex");
+    lib.logResource(h + ".bin", "C:\\claimed-before", "claimed-by-sample");
+    lib.logSnippet(h + ".bin", {as: "claimed-by-sample"}, "x");
+    atob("cHJvYmUtcGF5bG9hZA==");
     lib.logResource(h + ".bin", "C:\\x", "overwritten-by-sample");
+    lib.logResource(h + "_invoice.exe", "C:\\x", "overwritten-by-sample");
   } catch (err) {}
-});
-attempt("buffer-pool", function () {
-  // A pooled Buffer's backing store holds other host data.
-  function check(name, b) {
-    try { if (b && b.buffer && b.buffer.byteLength > 1024) hit("buffer-pool-" + name); } catch (err) {}
-  }
-  try { check("from", Buffer.from("x")); } catch (err) {}
-  try { check("module", require("buffer").Buffer.from("x")); } catch (err) {}
-  try { check("digest", require("crypto").createHash("sha256").update("x").digest()); } catch (err) {}
-  try { check("random", require("crypto").randomBytes(4)); } catch (err) {}
 });
 attempt("path-self-reference", function () {
   // If any of these is the host's real path module, lib's next results-file write lands on

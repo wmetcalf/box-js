@@ -22,15 +22,99 @@ const DEFAULT_VARS = Object.freeze({
   _x86: true,
 });
 
-// A directive starts a line or follows blank space or ; { } ( ) , / * (what is left of
-// /*@ and @*/ and of the code around it). Not after a word character ("user@end.example")
-// or a quote ("@set @x = 0" inside a string literal).
-const DIRECTIVE = /(?<=^|[\s;{}(),\/*])@(if|elif|else|end|set)(?![\w$])/gi;
+// Directives and @variables only count in code: codeMask() marks string literals, regex
+// literals and ordinary comments, where JScript sees text. A comment whose text starts
+// with "@" (//@if, and "//@cc_on @if" once analyze.js has removed "@cc_on") is code.
+const DIRECTIVE = /@(if|elif|else|end|set)(?![\w$])/gi;
 // "@set" must be followed by "@name =" to be one.
 const SET_SHAPE = /[ \t]*@[A-Za-z_$][\w$]*\s*=/y;
 // JScript's @set values are numbers and booleans. Strings are only allowed as literals
 // inside an expression, and bounded, so a sample cannot grow one across @set lines.
 const MAX_STRING = 4096;
+
+const REGEX_AFTER = /[(,=:[!&|?{};+\-*%<>~^]/;
+const REGEX_KEYWORDS = new Set(["return", "typeof", "case", "do", "else", "in", "new", "delete",
+  "void", "throw", "instanceof"]);
+
+// 1 for every character that is not code: inside a "..." / '...' / `...` literal, a regex
+// literal, or a comment. A "//@" or "/*@" comment is JScript conditional-compilation code,
+// so its contents stay code. Strings and regexes end at a line end (they cannot span one);
+// a "/" is a regex when the previous token cannot end an expression. One forward pass.
+function codeMask(text) {
+  const n = text.length;
+  const mask = new Uint8Array(n);
+  let prev = "";
+  let word = "";
+  let i = 0;
+  const skipTo = (end) => {
+    for (; i < end; i++) mask[i] = 1;
+  };
+  while (i < n) {
+    const c = text[i];
+    if (/[\w$]/.test(c)) {
+      word = (prev && /[\w$]/.test(prev) ? word : "") + c;
+      prev = c;
+      i++;
+      continue;
+    }
+    if (c === "\"" || c === "'" || c === "`") {
+      mask[i++] = 1;
+      while (i < n && text[i] !== c && text[i] !== "\n" && text[i] !== "\r") {
+        if (text[i] === "\\" && i + 1 < n) {
+          // An escape, or a line continuation (backslash + LF, CR or CRLF).
+          mask[i++] = 1;
+          if (text[i] === "\r" && text[i + 1] === "\n") mask[i++] = 1;
+        }
+        mask[i++] = 1;
+      }
+      if (i < n && text[i] === c) mask[i++] = 1;
+      prev = "a";
+      word = "";
+      continue;
+    }
+    if (c === "/" && text[i + 1] === "/") {
+      if (/^[ \t]*@/.test(text.slice(i + 2, i + 66))) {
+        i += 2;
+        continue;
+      }
+      const e = text.indexOf("\n", i);
+      skipTo(e < 0 ? n : e);
+      continue;
+    }
+    if (c === "/" && text[i + 1] === "*") {
+      if (/^[ \t]*@/.test(text.slice(i + 2, i + 66))) {
+        i += 2;
+        continue;
+      }
+      const e = text.indexOf("*/", i + 2);
+      skipTo(e < 0 ? n : e + 2);
+      continue;
+    }
+    if (c === "/" && (prev === "" || REGEX_AFTER.test(prev) ||
+        (/[\w$]/.test(prev) && REGEX_KEYWORDS.has(word)))) {
+      mask[i++] = 1;
+      let inClass = false;
+      while (i < n && text[i] !== "\n") {
+        const d = text[i];
+        mask[i++] = 1;
+        if (d === "\\" && i < n && text[i] !== "\n") mask[i++] = 1;
+        else if (d === "[") inClass = true;
+        else if (d === "]") inClass = false;
+        else if (d === "/" && !inClass) break;
+      }
+      while (i < n && /[a-z]/i.test(text[i])) mask[i++] = 1;
+      prev = "a";
+      word = "";
+      continue;
+    }
+    if (!/\s/.test(c)) {
+      prev = c;
+      word = "";
+    }
+    i++;
+  }
+  return mask;
+}
 
 // The text of a balanced "( ... )" starting at code[i] (after blanks), or a condition up
 // to the end of the line when there is no parenthesis (cpp's reading of the old rewrite).
@@ -145,12 +229,11 @@ function evaluate(text, vars) {
 
 // Replace @name in active code with the variable's value, as JScript does. An unknown
 // name in JScript's predefined namespace (@_win16, @_mac, @_alpha, ...) is NaN there, so
-// it becomes NaN here; other unknown names are left as they are (CSS "@media" in a string), and so is an @ that follows a word character ("user@_win32.example"
-// in a string): a conditional-compilation variable in code never does. String literals are
-// not tracked: a quote in a regex would hide every later variable on its line, leaving a
-// bare "@name" that fails to parse.
-function substitute(text, vars) {
-  return text.replace(/(^|[^\w$@])@([A-Za-z_$][\w$]*)/g, (m, pre, name) => {
+// it becomes NaN here; other unknown names stay as they are. Only in code (see codeMask),
+// and not right after an identifier character.
+function substitute(text, vars, mask, base) {
+  return text.replace(/(^|[^\w$@])@([A-Za-z_$][\w$]*)/g, (m, pre, name, offset) => {
+    if (mask[base + offset + pre.length]) return m;
     if (!Object.prototype.hasOwnProperty.call(vars, name)) return name.startsWith("_") ? pre + "NaN" : m;
     const v = vars[name];
     return pre + (typeof v === "number" && Number.isNaN(v) ? "NaN" : String(v));
@@ -181,10 +264,12 @@ function preprocess(code, warn = () => {}) {
       return false;
     }
   }
+  const mask = codeMask(code);
   DIRECTIVE.lastIndex = 0;
   let m;
   while ((m = DIRECTIVE.exec(code)) !== null) {
-    if (active()) out += substitute(code.slice(pos, m.index), vars);
+    if (mask[m.index]) continue;
+    if (active()) out += substitute(code.slice(pos, m.index), vars, mask, pos);
     let next = m.index + m[0].length;
     const kind = m[1].toLowerCase();
     // @elif/@else/@end with no open @if are text (e.g. "at @end" in a string).
@@ -232,7 +317,7 @@ function preprocess(code, warn = () => {}) {
       let i = next;
       while (i < code.length && /[ \t]/.test(code[i])) i++;
       let end = i;
-      while (end < code.length && code[end] !== "\n" && code[end] !== ";") end++;
+      while (end < code.length && code[end] !== "\n" && (code[end] !== ";" || mask[end])) end++;
       const stmt = code.slice(i, end);
       next = end;
       const sm = /^@([A-Za-z_$][\w$]*)\s*=([\s\S]*)$/.exec(stmt);
@@ -258,7 +343,7 @@ function preprocess(code, warn = () => {}) {
     pos = next;
     DIRECTIVE.lastIndex = next;
   }
-  if (active()) out += substitute(code.slice(pos), vars);
+  if (active()) out += substitute(code.slice(pos), vars, mask, pos);
   return out;
 }
 

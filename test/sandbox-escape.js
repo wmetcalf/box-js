@@ -48,8 +48,19 @@ function runProbe(probe, extraArgs) {
 	} catch (e) {}
 	let overwritten = [];
 	try {
-		overwritten = fs.readdirSync(results).filter((n) => n.endsWith(".bin") &&
-			fs.readFileSync(path.join(results, n), "latin1").includes("overwritten-by-sample"));
+		// A file under one of box-js's own content-addressed names that the sample wrote, or
+		// a results-index entry the sample made under such a name.
+		const hostNamed = (n) => /^[0-9a-f]{64}(\.bin|_)/i.test(n);
+		overwritten = fs.readdirSync(results).filter((n) => hostNamed(n) &&
+			/overwritten-by-sample|claimed-by-sample/.test(fs.readFileSync(path.join(results, n), "latin1")));
+		for (const index of ["resources.json", "snippets.json"]) {
+			const p = path.join(results, index);
+			if (!fs.existsSync(p)) continue;
+			const entries = JSON.parse(fs.readFileSync(p, "utf8"));
+			for (const k of Object.keys(entries)) {
+				if (hostNamed(k) && /claimed|overwritten/.test(JSON.stringify(entries[k]))) overwritten.push(index + ":" + k);
+			}
+		}
 	} catch (e) {}
 	return {work, urls, marks, leaked, overwritten};
 }
@@ -108,12 +119,9 @@ for (const [label, args, handlers] of MODES) {
 			it("reads no host file into the results", function() {
 				assert.deepStrictEqual(run.leaked, []);
 			});
-			// Only analyze.js's own atob() saves <sha256>.bin; boilerplate.js replaces atob.
-			if (!args.includes("--prepended-code=default")) {
-				it("cannot overwrite a file box-js itself saved", function() {
-					assert.deepStrictEqual(run.overwritten, []);
-				});
-			}
+			it("cannot write under one of box-js's own result names", function() {
+				assert.deepStrictEqual(run.overwritten, []);
+			});
 		});
 	}
 }

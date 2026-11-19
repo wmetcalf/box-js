@@ -72,6 +72,10 @@ describe("conditional compilation (cc_on.js)", function() {
 		assert.strictEqual(preprocess(pad), pad);
 		assert(Date.now() - t < 5000, `took ${Date.now() - t} ms`);
 	});
+	it("leaves variables that open a string, URL path or regex alone", function() {
+		assert.strictEqual(run("@if (1) var s = \"@_win32\", u = \"https://host/@_mac\", r = /@_win32/; @end").out,
+			"var s = \"@_win32\", u = \"https://host/@_mac\", r = /@_win32/;");
+	});
 	it("makes predefined-namespace names NaN in code", function() {
 		assert.strictEqual(run("@if (@_win32) var p = @_win16 ? 16 : 32; @end").out, "var p = NaN ? 16 : 32;");
 		assert.strictEqual(run("@if (1) var css = \" @media x\"; @end").out, "var css = \" @media x\";");
@@ -90,6 +94,22 @@ describe("conditional compilation (cc_on.js)", function() {
 		const r = run("@if (1) ".repeat(n) + "A();" + " @end".repeat(n));
 		assert.strictEqual(r.out, "A();");
 		assert(Date.now() - t < 5000, `took ${Date.now() - t} ms`);
+	});
+	it("finds directives right after a token, in code only", function() {
+		assert.strictEqual(run("@if (@_win16) var bits=16@else var bits=32@end\nRun(bits);").out, "var bits=32 Run(bits);");
+		assert.strictEqual(run("@if (@_win32) x=\"win32\"@else x=\"other\"@end").out, "x=\"win32\"");
+		assert.strictEqual(run("f.WriteLine(\"  @set @debug = 0\"); g();").out, "f.WriteLine(\" @set @debug = 0\"); g();");
+		assert.strictEqual(run("// config: @set @debug = 0; flip\ng();").out, "// config: @set @debug = 0; flip g();");
+		assert.strictEqual(run("if (/^[@_0-9a-z.]+$/.test(u)) g(\"follow @_jsmith\", @_win32);").out,
+			"if (/^[@_0-9a-z.]+$/.test(u)) g(\"follow @_jsmith\", true);");
+		// //@ comments are conditional-compilation code.
+		assert.strictEqual(run("//@if (@_win32)\nA();\n//@end\nB();").out, "// A(); // B();");
+		// A string continued over CRLF/LF still ends where it should.
+		assert.strictEqual(run("@if (@_win32)\r\nvar b = \"one \\\r\ntwo\"; var a = @_x86;\r\n@end").out,
+			"var b = \"one \\ two\"; var a = true;");
+		assert.strictEqual(run("@if (1) var b = \"one \\\ntwo\"; var a = @_x86; @end").out, "var b = \"one \\ two\"; var a = true;");
+		// A division is not a regex: the @if after it is still found.
+		assert.strictEqual(run("var h = w / 2; @if (@_win32) A(); @end").out, "var h = w / 2; A();");
 	});
 	it("starts no process", function() {
 		const names = ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork"];

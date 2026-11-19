@@ -23,6 +23,7 @@ function bomEncoding(buf) {
 }
 const path = require("path");
 const { VM } = require("vm2");
+const { makeSandboxRequire, makeLibFacade } = require("./sandbox-require");
 const child_process = require("child_process");
 const argv = require("./argv.js").run;
 const jsdom = require("jsdom").JSDOM;
@@ -1549,9 +1550,15 @@ var wscript_proxy = new Proxy(
   }
 );
 
+// The sandbox never gets the host's require, lib or any host module object: in-sandbox
+// code shares one scope with the sample, so whatever it can reach the sample can too.
+// See sandbox-require.js.
+const sandboxLib = makeLibFacade(lib);
+const sandboxRequire = makeSandboxRequire(lib, argv);
+
 const sandbox = {
-  // Inject lib for sandbox functions to use
-  lib: lib,
+  // Logging/emulation helpers for in-sandbox code (a frozen facade, not lib itself).
+  lib: sandboxLib,
   // Proxy for Components.classes - created here in host context because
   // vm2 >=3.10.4 disables Proxy inside the sandbox to prevent escape via
   // handler leakage. Boilerplate.js references this as __componentClassesProxy.
@@ -1715,11 +1722,12 @@ const sandbox = {
   clearTimeout: function (id) {
     lib.verbose("clearTimeout called with id: " + id);
   },
-  logJS: lib.logJS,
-  logIOC: lib.logIOC,
-  logUrl: lib.logUrl,
+  logJS: sandboxLib.logJS,
+  logIOC: sandboxLib.logIOC,
+  logUrl: sandboxLib.logUrl,
   ActiveXObject,
-  dom,
+  // No `dom`: the JSDOM instance's window carries the host realm's eval, so
+  // dom.window.eval("process") was the host process.
   window: {
     addEventListener: function (event, callback, useCapture) {
       lib.verbose(`window.addEventListener('${event}') called`);
@@ -1960,7 +1968,7 @@ const sandbox = {
     return out;
   },
   self: {},
-  require,
+  require: sandboxRequire,
   atob: function (str) {
     try {
       // Make sure we have a valid string and handle all edge cases

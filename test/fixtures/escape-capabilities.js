@@ -16,6 +16,14 @@ attempt("module-shapes", function () {
   try { var z = new E.EventEmitter(); z.on("z", function (v) { got.push(v); }); z.emit("z", "named"); } catch (err) {}
   if (got.join(",") === "ctor,inherits,named") url("http://attempted.example/events-work");
   try {
+    var em = new E();
+    E.once(em, "ready").then(function () {
+      // node removes its temporary "error" listener once the event fires.
+      if (em.listenerCount("error") === 0) url("http://attempted.example/events-once-clean");
+    });
+    em.emit("ready");
+  } catch (err) {}
+  try {
     var zl = require("zlib");
     var round = zl.inflateSync(zl.deflateSync(Buffer.from("zlib-roundtrip"))).toString();
     if (round === "zlib-roundtrip") url("http://attempted.example/zlib-works");

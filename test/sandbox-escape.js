@@ -40,7 +40,9 @@ function runProbe(probe, extraArgs) {
 	fs.writeFileSync(`${mark}.leak.js`, "\nhit(\"host-file-" + "read\");\n");
 	try {
 		execFileSync(process.execPath, [path.join(boxDir, "run.js"), sample, `--output-dir=${work}`,
-			"--no-kill", "--timeout=20", ...extraArgs], {cwd: work, stdio: "ignore", timeout: 90000});
+			// Generous: the reflection walks are slow on a loaded machine, and a probe cut off
+			// by the timeout fails "runs every escape attempt to the end" instead of passing.
+			"--no-kill", "--timeout=90", ...extraArgs], {cwd: work, stdio: "ignore", timeout: 180000});
 	} catch (e) {
 		// box-js exits non-zero for some samples; the outputs are what is checked.
 	}
@@ -64,18 +66,20 @@ const MODES = [
 	// analyze.js's handlers.
 	["default boilerplate (the engine's mode)", ["--prepended-code=default", "--rewrite-loops",
 		"--activex-as-ioc", "--no-shell-error", "--ignore-wscript-quit"], ["setInterval-global", "setTimeout-global"]],
-	// The <a download> handler only saves with --fake-download.
-	["default boilerplate, --fake-download", ["--prepended-code=default", "--no-shell-error",
-		"--ignore-wscript-quit", "--fake-download"], ["setInterval-global", "setTimeout-global"]],
+	// The <a download> handler only saves with --fake-download, and is analyze.js's own
+	// document (boilerplate.js replaces document), so this mode is bare.
+	["bare sandbox, --fake-download", ["--fake-download"],
+		["setInterval-global", "setInterval", "setTimeout-global", "listener"]],
 ];
 const CC_ON = ["m4-syscmd", "m4-prefixed-syscmd", "m4-esyscmd", "m4-include", "cpp-include",
 	"cpp-include-indented", "cpp-include-digraph", "cpp-include-splice", "cpp-include-splice-crlf",
-	"cpp-include-splice-space", "cpp-include-trigraph"];
+	"cpp-include-splice-space", "cpp-include-trigraph", "cpp-include-nul-digraph",
+	"cpp-include-nul-trigraph", "cpp-include-nul-splice", "m4-nul-syscmd"];
 
 for (const [label, args, handlers] of MODES) {
 	for (const probe of ["escape-payloads.js", "escape-strings.js", "escape-capabilities.js"]) {
 		describe(`sandbox isolation: ${probe}, ${label}`, function() {
-			this.timeout(120000);
+			this.timeout(240000);
 			let run;
 			before(function() {
 				run = runProbe(probe, args);
@@ -97,7 +101,8 @@ for (const [label, args, handlers] of MODES) {
 					if (ccToolchain) want.push(...CC_ON.map((c) => "cc-" + c));
 				}
 				if (probe === "escape-capabilities.js") {
-					want.push("events-work", "events-statics", "zlib-works", "zlib-callback-works", "after-splice", "after-json");
+					want.push("events-work", "events-statics", "zlib-works", "zlib-callback-works", "after-splice", "after-json",
+						"events-once-clean");
 				}
 				for (const w of want) {
 					assert(run.urls.includes("http://attempted.example/" + w),

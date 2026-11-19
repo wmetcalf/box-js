@@ -175,15 +175,23 @@ const PRELUDE = `(function () {
   };
   P.rawListeners = function (name) { return ((this._events && this._events[name]) || []).slice(); };
   P.listenerCount = function (name) { return ((this._events && this._events[name]) || []).length; };
-  P.eventNames = function () { return this._events ? Object.keys(this._events) : []; };
+  P.eventNames = function () { return this._events ? Reflect.ownKeys(this._events) : []; };
   P.setMaxListeners = function (n) { this._maxListeners = n; return this; };
   P.getMaxListeners = function () {
     return this._maxListeners === undefined ? EventEmitter.defaultMaxListeners : this._maxListeners;
   };
   EventEmitter.once = function (emitter, name) {
     return new Promise(function (resolve, reject) {
-      emitter.once(name, function () { resolve(Array.prototype.slice.call(arguments)); });
-      if (name !== "error") emitter.once("error", reject);
+      function onError(err) {
+        emitter.removeListener(name, onEvent);
+        reject(err);
+      }
+      function onEvent() {
+        if (name !== "error") emitter.removeListener("error", onError);
+        resolve(Array.prototype.slice.call(arguments));
+      }
+      emitter.once(name, onEvent);
+      if (name !== "error") emitter.once("error", onError);
     });
   };
   EventEmitter.listenerCount = function (emitter, name) { return emitter.listenerCount(name); };

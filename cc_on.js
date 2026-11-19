@@ -63,6 +63,10 @@ function codeMask(text) {
   };
   // Parentheses opened right after if/while/for/with: a "/" after their ")" starts a regex.
   const parens = [];
+  // Where an unclosed quote or regex scan stopped (its line end), per opener: a later
+  // opener of the same kind before that point cannot close either, so it is not rescanned
+  // (which made a line full of unclosed quotes or regexes quadratic).
+  const noClose = {"\"": -1, "'": -1, "/": -1};
   const markRange = (a, b) => {
     for (let k = a; k < b; k++) mask[k] = 1;
   };
@@ -123,7 +127,7 @@ function codeMask(text) {
       gap = false;
       continue;
     }
-    if (c === "\"" || c === "'") {
+    if ((c === "\"" || c === "'") && i > noClose[c]) {
       // A string that does not close on its line (backslash continuations aside) is not
       // one: leave the quote as code rather than mask the rest of the line.
       const start = i;
@@ -140,6 +144,7 @@ function codeMask(text) {
         }
         k++;
       }
+      if (!closed) noClose[c] = k;
       if (closed) {
         markRange(start, k + 1);
         i = k + 1;
@@ -194,7 +199,8 @@ function codeMask(text) {
       i += 2;
       continue;
     }
-    if (c === "/" && (prev === "" || REGEX_AFTER.test(prev) || (isWord(prev) && REGEX_KEYWORDS.has(word)))) {
+    if (c === "/" && i > noClose["/"] &&
+        (prev === "" || REGEX_AFTER.test(prev) || (isWord(prev) && REGEX_KEYWORDS.has(word)))) {
       // A regex that does not close on its line is a division after all.
       let k = i + 1;
       let inClass = false;
@@ -213,6 +219,7 @@ function codeMask(text) {
         }
         k++;
       }
+      if (!closed) noClose["/"] = k;
       if (closed) {
         k++;
         while (k < n && /[a-z]/i.test(text[k])) k++;
@@ -263,6 +270,8 @@ function lookup(vars, name) {
 
 // Evaluate a condition/@set expression. Anything outside the whitelist is an error.
 function evaluate(text, vars) {
+  // The marker prefix is box-js's own: a condition that spells it is not a variable.
+  if (text.includes("__boxjs_cc_")) throw new Error("reserved identifier");
   const source = text.replace(/@([A-Za-z_$][\w$]*)/g, "__boxjs_cc_$1");
   const ast = acorn.parse("(" + source + "\n)", {ecmaVersion: 2020});
   if (ast.body.length !== 1 || ast.body[0].type !== "ExpressionStatement") {

@@ -52,6 +52,15 @@ function freezeCopy(source) {
   return Object.freeze(out);
 }
 
+// A subclass owned by the sandbox. vm2 lets a sample assign to a host function's own
+// properties (statics: URL.canParse = ...), and the host shares the real class; a write to
+// the subclass stays on the subclass. Instances behave as the real class's.
+function own(C) {
+  const Sub = class extends C {};
+  Object.defineProperty(Sub, "name", {value: C.name});
+  return Sub;
+}
+
 function deepFreezeCopy(value) {
   if (Array.isArray(value)) return Object.freeze(value.map(deepFreezeCopy));
   if (value && typeof value === "object") {
@@ -285,8 +294,10 @@ function buildModules(lib, argv) {
     // events is filled in by installPrelude.
     path,
     querystring: freezeCopy(querystring, 0),
-    string_decoder: pick(stringDecoder, ["StringDecoder"]),
-    url: pick(url, ["URL", "URLSearchParams", "parse", "format", "resolve"]),
+    string_decoder: Object.freeze(Object.assign(Object.create(null),
+      {StringDecoder: SANDBOX_CLASSES.StringDecoder})),
+    url: Object.freeze(Object.assign(Object.create(null), pick(url, ["parse", "format", "resolve"]),
+      {URL: SANDBOX_CLASSES.URL, URLSearchParams: SANDBOX_CLASSES.URLSearchParams})),
     util,
     vm: Object.freeze(Object.assign(Object.create(null), {Script})),
     zlib: makeZlib(),
@@ -297,10 +308,18 @@ function buildModules(lib, argv) {
   return table;
 }
 
+const SANDBOX_CLASSES = {
+  StringDecoder: own(stringDecoder.StringDecoder),
+  TextDecoder: own(nodeUtil.TextDecoder),
+  TextEncoder: own(nodeUtil.TextEncoder),
+  URL: own(url.URL),
+  URLSearchParams: own(url.URLSearchParams),
+};
+
 function makeUtil(inherits) {
   const util = Object.assign(Object.create(null), {
-    TextDecoder: nodeUtil.TextDecoder,
-    TextEncoder: nodeUtil.TextEncoder,
+    TextDecoder: SANDBOX_CLASSES.TextDecoder,
+    TextEncoder: SANDBOX_CLASSES.TextEncoder,
     callbackify: nodeUtil.callbackify,
     format: nodeUtil.format,
     inspect,

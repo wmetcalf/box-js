@@ -91,6 +91,31 @@ attempt("every-global", function () {
     });
   });
 });
+attempt("required-facades", function () {
+  // Every member of every module the sandbox's require hands out, two levels down.
+  ["./lib.js", "./argv.js", "./local_text_decoder.js", "node-html-parser", "buffer", "crypto",
+    "events", "path", "querystring", "string_decoder", "url", "util", "vm", "zlib"].forEach(function (id) {
+    var m;
+    try { m = require(id); } catch (e) { return; }
+    if (m === null || (typeof m !== "object" && typeof m !== "function")) return;
+    fromCtor("req-" + id, m);
+    var names = [];
+    try { names = Object.getOwnPropertyNames(m); } catch (e) {}
+    names.forEach(function (k) {
+      var v;
+      try { v = m[k]; } catch (e) { return; }
+      if (v === null || (typeof v !== "object" && typeof v !== "function")) return;
+      fromCtor("req-" + id + "." + k, v);
+      var inner = [];
+      try { inner = Object.getOwnPropertyNames(v).slice(0, 100); } catch (e) {}
+      inner.forEach(function (j) {
+        var w;
+        try { w = v[j]; } catch (e) { return; }
+        if (w !== null && (typeof w === "object" || typeof w === "function")) fromCtor("req-" + id + "." + k + "." + j, w);
+      });
+    });
+  });
+});
 attempt("jsdom", function () {
   if (typeof dom === "undefined" || !dom) return;
   try { fromCtor("dom-window", dom.window); } catch (e) {}

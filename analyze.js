@@ -89,12 +89,18 @@ lib.verbose("Box-js version: " + require("./package.json").version);
 
 let git_path = path.join(__dirname, ".git");
 if (fs.existsSync(git_path) && fs.lstatSync(git_path).isDirectory()) {
-  lib.verbose(
-    "Commit: " +
-      fs
-        .readFileSync(path.join(__dirname, ".git/refs/heads/master"), "utf8")
-        .replace(/\n/, "")
-  );
+  // Informational only. A checkout on another branch, a detached HEAD (CI) or packed refs
+  // has no .git/refs/heads/master, and that used to abort every analysis.
+  try {
+    lib.verbose(
+      "Commit: " +
+        fs
+          .readFileSync(path.join(__dirname, ".git/refs/heads/master"), "utf8")
+          .replace(/\n/, "")
+    );
+  } catch (e) {
+    lib.verbose("Commit: unknown (no .git/refs/heads/master)");
+  }
 } else {
   lib.verbose("No git folder found.");
 }

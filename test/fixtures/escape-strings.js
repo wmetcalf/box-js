@@ -30,6 +30,11 @@ attempt("cc_on-preprocessors", function () {
     "cpp-include-splice-crlf": "\n%\\\r\n:include \"" + leak + "\"\n",
     "cpp-include-splice-space": "\n%\\  \n:include \"" + leak + "\"\n",
     "cpp-include-trigraph": "\n??=include \"" + leak + "\"\n",
+    // m4 drops NUL bytes, so a NUL can hide a directive from escaping done before m4.
+    "cpp-include-nul-digraph": "\n%\u0000:include \"" + leak + "\"\n",
+    "cpp-include-nul-trigraph": "\n?\u0000?=include \"" + leak + "\"\n",
+    "cpp-include-nul-splice": "\n%\\\u0000\n:include \"" + leak + "\"\n",
+    "m4-nul-syscmd": "m4\u0000_syscmd(: > '" + MARK + ".m4-nul-syscmd')",
   };
   Object.keys(bodies).forEach(function (k) {
     // An escaped "#include" is not JS, so the eval may throw; that is the blocked outcome.

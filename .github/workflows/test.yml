@@ -16,8 +16,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      # file: resource typing; m4 + cc: the @cc_on/@if rewrite, which the sandbox-escape
-      # payloads must actually reach (test/sandbox-escape.js fails under CI without them).
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends file m4 gcc
+      # file: resource typing (lib.logResource).
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends file
       - run: npm ci
       - run: npm test

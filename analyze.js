@@ -24,6 +24,7 @@ function bomEncoding(buf) {
 const path = require("path");
 const { VM } = require("vm2");
 const { makeSandboxRequire, makeLibFacade, PRELUDE } = require("./sandbox-require");
+const ccOn = require("./cc_on");
 const child_process = require("child_process");
 const argv = require("./argv.js").run;
 const jsdom = require("jsdom").JSDOM;
@@ -905,99 +906,11 @@ function rewrite(code, useException=false) {
                 .replace(/\/\*@cc_on/gi, "")
                 .replace(/@cc_on/gi, "")
                 .replace(/\/\*@/g, "\n").replace(/@\*\//g, "\n");
-            // "@if" processing requires m4 and cc, but don't require them otherwise
-            if (/@if/.test(code)) {
-                const beforeIf = code;
-                /*
-                  "@if (cond) source" becomes "\n _boxjs_if(cond)" with JS
-                  "\n _boxjs_if(cond)" becomes "\n #if (cond) \n source" with m4
-                  "\n #if (cond) \n source" becomes "source" with the C preprocessor
-                */
-                // The sample's text is m4 and then cpp input, and neither may act on a
-                // directive the sample wrote.
-                //
-                // m4 runs with -P, so its builtins (syscmd, esyscmd, include, and the
-                // ones scripts use as names: eval, index, substr, len, format, dnl) only
-                // exist as m4_*; every "m4_" in the sample is escaped, quoting is switched
-                // off after the two defines below (and comments, so a "#" in an @if
-                // condition does not swallow its closing parenthesis), and NUL bytes (which m4 drops, so
-                // "%<NUL>:" would leave it as "%:") are escaped too.
-                //
-                // cpp's escaping is applied to m4's OUTPUT, i.e. to exactly what cpp
-                // reads: every "#", "%:" (digraph), "??" (trigraphs), _Pragma, __has_*
-                // and a backslash that ends a line (cpp splices those before it looks
-                // for directives). box-js's own #if/#elif/#else/#endif travel through m4
-                // as markers and are turned into directives only after that escaping, so
-                // the only directives cpp sees are those four.
-                //
-                // Each marker is _boxjs_esc<letter>_, and an existing "_boxjs_esc" is
-                // escaped first, so no marker is a prefix of another, the sample cannot
-                // write one, and the restore after cc is exact.
-                code = code
-                    .replace(/_boxjs_esc/g, "_boxjs_escE_")
-                    .replace(/\0/g, "_boxjs_escN_")
-                    .replace(/m4_/g, "_boxjs_escM_");
-                code = code
-                    .replace(/@if\s*/gi, "\n_boxjs_if")
-                    .replace(/@elif\s*/gi, "\n_boxjs_elif")
-                    .replace(/@else/gi, "\n_boxjs_escS_\n")
-                    .replace(/@end/gi, "\n_boxjs_escF_\n")
-                    .replace(/@/g, "_boxjs_at");
-                // Require m4, cc
-                if (lacksBinary("cc")) lib.kill("You must install a C compiler (executable 'cc' not found).");
-                if (lacksBinary("m4")) lib.kill("You must install m4.");
-                code = `
-m4_define(\`_boxjs_if', _boxjs_escI_ ($1)\n)
-m4_define(\`_boxjs_elif', _boxjs_escL_ ($1)\n)
-m4_changequote(,)m4_changecom()m4_dnl
-` + code;
+            // Evaluated in JS (cc_on.js); this used to run m4 and cpp on the sample.
+            if (/@(if|set)/i.test(code)) {
                 lib.info("    Replacing @cc_on statements (use --no-cc_on-rewrite to skip)...", false);
-                // Bounded: hostile input must not hang the analysis, and the default
-                // 1 MiB maxBuffer silently truncated larger samples.
-                const preprocessLimits = {timeout: 60000, maxBuffer: 256 * 1024 * 1024};
-                const outputM4 = child_process.spawnSync("m4", ["-P"], {
-                    input: code,
-                    ...preprocessLimits,
-                });
-                const cppInput = outputM4.stdout.toString("utf8")
-                    .replace(/\\(?=[ \t\f\v]*(?:\r\n|\r|\n))/g, "_boxjs_escB_")
-                    .replace(/\?\?/g, "_boxjs_escQ_")
-                    .replace(/#/g, "_boxjs_escH_")
-                    .replace(/%:/g, "_boxjs_escD_")
-                    .replace(/_Pragma/g, "_boxjs_escP_")
-                    .replace(/__has_/g, "_boxjs_escA_")
-                    .replace(/_boxjs_escI_/g, "#if")
-                    .replace(/_boxjs_escL_/g, "#elif")
-                    .replace(/_boxjs_escS_/g, "#else")
-                    .replace(/_boxjs_escF_/g, "#endif");
-                const outputCc = child_process.spawnSync("cc", [
-                    "-E", "-P", // preprocess, don't compile
-                    "-xc", // read from stdin, lang: c
-                    "-D_boxjs_at_x86=1", "-D_boxjs_at_win16=0", "-D_boxjs_at_win32=1", "-D_boxjs_at_win64=1", // emulate Windows 32 bit
-                    "-D_boxjs_at_jscript=1",
-                    "-o-", // print to stdout
-                    "-", // read from stdin
-                ], {
-                    input: cppInput,
-                    ...preprocessLimits,
-                });
-                // A failed m4 or cc used to leave the analysed code empty, i.e. a
-                // sample could make box-js analyse nothing. Keep the source instead.
-                if (outputM4.status !== 0 || outputCc.status !== 0 || outputCc.error || outputM4.error) {
-                    lib.warning(`@cc_on preprocessing failed (m4 ${outputM4.status}, cc ${outputCc.status}); analysing the source without it`);
-                    code = beforeIf;
-                } else code = outputCc.stdout.toString("utf8")
-                    .replace(/_boxjs_escA_/g, "__has_")
-                    .replace(/_boxjs_escP_/g, "_Pragma")
-                    .replace(/_boxjs_escD_/g, "%:")
-                    .replace(/_boxjs_escH_/g, "#")
-                    .replace(/_boxjs_escM_/g, "m4_")
-                    .replace(/_boxjs_escQ_/g, "??")
-                    .replace(/_boxjs_escB_/g, "\\")
-                    .replace(/_boxjs_escN_/g, "\0")
-                    .replace(/_boxjs_escE_/g, "_boxjs_esc");
+                code = ccOn.preprocess(code, (msg) => lib.warning(msg));
             }
-            code = code.replace(/_boxjs_at/g, "@");
         } else {
             lib.warn(
                 `The code appears to contain conditional compilation statements.

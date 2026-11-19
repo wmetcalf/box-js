@@ -43,6 +43,26 @@ attempt("cc_on-preprocessors", function () {
     try { eval(src); } catch (e) {}
   });
 });
+attempt("cc_on-conditions", function () {
+  // __has_include in an @if condition (also UCN-spelled, which GCC read as the real thing)
+  // is a host file-existence oracle; _Pragma("GCC dependency ...") opens a host file.
+  var A = String.fromCharCode(64), leak = MARK + ".leak.js";
+  var conds = {
+    "cpp-has-include": "__has_include(\"" + leak + "\")",
+    "cpp-has-include-ucn": "__has\\u005finclude(\"" + leak + "\")",
+    "cpp-pragma-ucn": "1)\n_\\u0050ragma(\"GCC dependency \\\"" + leak + "\\\"\")\n" + A + "end\n" + A + "if (1",
+  };
+  Object.keys(conds).forEach(function (k) {
+    url("http://attempted.example/cc-" + k);
+    try { eval("var c5 = 1; // " + A + "cc_on " + A + "if (" + conds[k] + ") hit('" + k + "'); " + A + "end\n"); } catch (err) {}
+  });
+});
+attempt("cc_on-semantics", function () {
+  // Real JScript conditions keep working: a float version test and @set.
+  var A = String.fromCharCode(64);
+  eval("var cc3 = 1; // " + A + "cc_on " + A + "if (" + A + "_jscript_version >= 5.5)\nurl('http://attempted.example/cc-float-condition');\n" + A + "end\n");
+  eval("var cc4 = 1; // " + A + "cc_on " + A + "set " + A + "probe = 7\n" + A + "if (" + A + "probe == 7) url('http://attempted.example/cc-set'); " + A + "end\n");
+});
 attempt("cc_on-evasion", function () {
   // A "#" in an @if condition used to open an m4 comment that swallowed the closing
   // parenthesis; m4 failed and box-js analysed an empty program.

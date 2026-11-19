@@ -2,7 +2,8 @@
 
 // The sample must never reach the worker's own process: not `process`, not the host
 // `require`, not a module that can (fs, child_process, vm, ...), not a host eval, not the
-// m4/cpp that @cc_on/@if source is piped through. These run box-js end to end on probes
+// conditional-compilation (@cc_on/@if) rewrite, which used to pipe the sample through m4
+// and cpp. These run box-js end to end on probes
 // under test/fixtures/ (escape-helpers.js prefixed to each) that try known vm2 /
 // host-reference escapes and, on success, log http://escaped.example/<name> and drop a
 // marker file next to the results dir through the host's real fs.
@@ -17,18 +18,6 @@ const boxDir = path.join(__dirname, "..");
 const fixture = (name) => fs.readFileSync(path.join(__dirname, "fixtures", name), "utf8");
 const helpers = fixture("escape-helpers.js");
 
-// The @cc_on/@if payloads in escape-strings.js only reach m4 and cpp when both are
-// installed; without them box-js skips the rewrite and those payloads prove nothing. Say
-// so instead of passing (and fail under CI, which must have them).
-function has(bin) {
-	try {
-		execFileSync("sh", ["-c", `command -v ${bin}`], {stdio: "ignore"});
-		return true;
-	} catch (e) {
-		return false;
-	}
-}
-const ccToolchain = has("m4") && has("cc");
 
 function runProbe(probe, extraArgs) {
 	const work = fs.mkdtempSync(path.join(os.tmpdir(), "boxjs-escape-"));
@@ -74,7 +63,8 @@ const MODES = [
 const CC_ON = ["m4-syscmd", "m4-prefixed-syscmd", "m4-esyscmd", "m4-include", "cpp-include",
 	"cpp-include-indented", "cpp-include-digraph", "cpp-include-splice", "cpp-include-splice-crlf",
 	"cpp-include-splice-space", "cpp-include-trigraph", "cpp-include-nul-digraph",
-	"cpp-include-nul-trigraph", "cpp-include-nul-splice", "m4-nul-syscmd"];
+	"cpp-include-nul-trigraph", "cpp-include-nul-splice", "m4-nul-syscmd", "cpp-has-include",
+	"cpp-has-include-ucn", "cpp-pragma-ucn"];
 
 for (const [label, args, handlers] of MODES) {
 	for (const probe of ["escape-payloads.js", "escape-strings.js", "escape-capabilities.js"]) {
@@ -87,18 +77,12 @@ for (const [label, args, handlers] of MODES) {
 			after(function() {
 				if (run) fs.rmSync(run.work, {recursive: true, force: true});
 			});
-			if (probe === "escape-strings.js") {
-				it("has m4 and cc, so the @cc_on payloads reach them", function() {
-					if (ccToolchain) return;
-					if (process.env.CI) assert.fail("m4 and cc are required for the @cc_on escape payloads");
-					this.skip();
-				});
-			}
 			it("runs every escape attempt to the end", function() {
 				const want = ["done"];
 				if (probe === "escape-strings.js") {
 					want.push(...handlers.map((h) => "ran-" + h));
-					if (ccToolchain) want.push(...CC_ON.map((c) => "cc-" + c), "cc-hash-condition");
+					want.push(...CC_ON.map((c) => "cc-" + c), "cc-hash-condition", "cc-float-condition",
+						"cc-set");
 				}
 				if (probe === "escape-capabilities.js") {
 					want.push("events-work", "events-statics", "zlib-works", "zlib-callback-works", "after-splice", "after-json",

@@ -2492,12 +2492,13 @@ var _http = {
     },
 };
 
-// Emulated Node https module (require_override.js maps "https" here). https used to reach
+// Emulated Node https module (require_override.js maps "https" here; an unusual name, since
+// a sample-level `const _https` would otherwise shadow it in the block they share). https used to reach
 // the real module, whose requests in a network-less worker fail asynchronously (EAI_AGAIN,
 // then "close"), so the code around a beacon kept running. This keeps that: each request
 // is logged with the URL node would contact and returns an emitter that fails the same
 // way. Defined at global scope, so a sample's own top-level names cannot shadow what it uses.
-var _https = (function () {
+var __boxjs_https = (function () {
     const EventEmitter = require("events");
     const str = (v) => (v === undefined || v === null) ? "" : String(v);
     // Parsed by hand: the sandbox's URL is box-js's own emulation.
@@ -2570,15 +2571,25 @@ var _https = (function () {
 	};
 	// Delivered when the failure has happened and someone listens: a listener attached
 	// after an await still gets it, as with a real lookup that fails later.
+	// Order as node: "error", "close", then write() callbacks with
+	// ERR_SOCKET_CLOSED_BEFORE_CONNECTION.
+	const flushCallbacks = () => {
+	    while (pendingCallbacks.length) {
+		const err = new Error("Socket closed before the connection was established");
+		err.code = "ERR_SOCKET_CLOSED_BEFORE_CONNECTION";
+		try { pendingCallbacks.shift()(err); } catch (e) {}
+	    }
+	};
 	const deliver = () => {
 	    if (!failed) return;
-	    while (pendingCallbacks.length) {
-		try { pendingCallbacks.shift()(error()); } catch (e) {}
+	    if (!delivered && req.listenerCount("error") > 0) {
+		delivered = true;
+		req.emit("error", error());
+		req.emit("close");
 	    }
-	    if (delivered || req.listenerCount("error") === 0) return;
-	    delivered = true;
-	    req.emit("error", error());
-	    req.emit("close");
+	    // (Without an "error" listener node would crash the process; the callbacks still
+	    // run here, so the analysis sees what the sample does next.)
+	    flushCallbacks();
 	};
 	for (const m of ["on", "once", "addListener", "prependListener", "prependOnceListener"]) {
 	    const add = req[m];
@@ -2593,8 +2604,8 @@ var _https = (function () {
 		return r;
 	    };
 	}
-	// write(data[, encoding][, cb]) / end([data][, encoding][, cb]): the callback gets the
-	// failure, as node calls it with an error when the socket never connected.
+	// write(data[, encoding][, cb]): the callback gets the failure, as node calls it with
+	// an error when the socket never connected.
 	const withCallback = function () {
 	    const cb = Array.prototype.slice.call(arguments).reverse().find((x) => typeof x === "function");
 	    if (cb) {
@@ -2604,13 +2615,19 @@ var _https = (function () {
 	    return req;
 	};
 	req.write = withCallback;
-	req.end = withCallback;
+	// end()'s callback waits for "finish", which a request that never connected does not
+	// emit.
+	req.end = function () { return req; };
 	for (const m of ["setTimeout", "setHeader", "removeHeader", "destroy", "abort", "setNoDelay",
 			 "setSocketKeepAlive", "flushHeaders", "cork", "uncork"]) {
 	    req[m] = function () { return req; };
 	}
 	req.getHeader = function () { return undefined; };
-	Promise.resolve().then(() => {
+	// The lookup fails on a later macrotask, as a real one does: a no-sleep retry loop
+	// must not starve timers and other async callbacks (__boxjs_defer is analyze.js's
+	// setImmediate; boilerplate's own setTimeout runs callbacks at once).
+	const later = typeof __boxjs_defer === "function" ? __boxjs_defer : (f) => Promise.resolve().then(f);
+	later(() => {
 	    failed = true;
 	    deliver();
 	    if (!delivered && req.listenerCount("close") > 0 && req.listenerCount("error") === 0) {

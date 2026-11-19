@@ -17,7 +17,7 @@ function require(arg) {
 	"http" : _http,
 	// https used to fall through to the real module; _https (boilerplate.js) emulates
 	// it as a network-less worker saw it.
-	"https" : _https,
+	"https" : __boxjs_https,
         "net" : {
             createConnection: _createConnection,
             Socket: _Socket,

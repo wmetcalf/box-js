@@ -1634,6 +1634,17 @@ const sandbox = {
     // TODO: If Blob need to extract the data.
     lib.writeFile(fname, data);
   },
+  // A later macrotask for boilerplate.js's emulated https failures (its setTimeout is
+  // synchronous). The callback is the sandbox's own function.
+  __boxjs_defer: function (fn) {
+    if (typeof fn === "function") setImmediate(() => {
+      try {
+        fn();
+      } catch (e) {
+        lib.verbose("deferred callback error: " + e.message);
+      }
+    });
+  },
   setInterval: function (func, time) {
     // For malware analysis, we want to execute the callback
     // but need to handle cases where the callback references the interval ID

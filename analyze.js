@@ -904,6 +904,23 @@ function rewrite(code, useException=false) {
                   "\n _boxjs_if(cond)" becomes "\n #if (cond) \n source" with m4
                   "\n #if (cond) \n source" becomes "source" with the C preprocessor
                 */
+                // The sample's text is m4 and cpp input. Neither may see a directive the
+                // sample wrote. m4 runs with -P, so its builtins (syscmd, esyscmd,
+                // include, and the ones a script uses as names: eval, index, substr,
+                // len, format, dnl) only exist as m4_*, and every "m4_" in the sample is
+                // escaped; quoting is switched off after the two defines below, so
+                // backticks and quotes pass through. cpp never sees a "#", "%:" (the
+                // digraph), _Pragma or __has_* the sample wrote, so "#include </etc/..>"
+                // is not a directive however it is placed. Each marker is
+                // _boxjs_esc<letter>_ and an existing "_boxjs_esc" is escaped first, so
+                // no marker is a prefix of another and the restore after cc is exact.
+                code = code
+                    .replace(/_boxjs_esc/g, "_boxjs_escE_")
+                    .replace(/m4_/g, "_boxjs_escM_")
+                    .replace(/#/g, "_boxjs_escH_")
+                    .replace(/%:/g, "_boxjs_escD_")
+                    .replace(/_Pragma/g, "_boxjs_escP_")
+                    .replace(/__has_/g, "_boxjs_escA_");
                 code = code
                     .replace(/@if\s*/gi, "\n_boxjs_if")
                     .replace(/@elif\s*/gi, "\n_boxjs_elif")
@@ -914,11 +931,12 @@ function rewrite(code, useException=false) {
                 if (lacksBinary("cc")) lib.kill("You must install a C compiler (executable 'cc' not found).");
                 if (lacksBinary("m4")) lib.kill("You must install m4.");
                 code = `
-define(\`_boxjs_if', #if ($1)\n)
-define(\`_boxjs_elif', #elif ($1)\n)
+m4_define(\`_boxjs_if', #if ($1)\n)
+m4_define(\`_boxjs_elif', #elif ($1)\n)
+m4_changequote(,)m4_dnl
 ` + code;
                 lib.info("    Replacing @cc_on statements (use --no-cc_on-rewrite to skip)...", false);
-                const outputM4 = child_process.spawnSync("m4", [], {
+                const outputM4 = child_process.spawnSync("m4", ["-P"], {
                     input: code
                 });
                 const outputCc = child_process.spawnSync("cc", [
@@ -931,7 +949,13 @@ define(\`_boxjs_elif', #elif ($1)\n)
                 ], {
                     input: outputM4.stdout.toString("utf8"),
                 });
-                code = outputCc.stdout.toString("utf8");
+                code = outputCc.stdout.toString("utf8")
+                    .replace(/_boxjs_escA_/g, "__has_")
+                    .replace(/_boxjs_escP_/g, "_Pragma")
+                    .replace(/_boxjs_escD_/g, "%:")
+                    .replace(/_boxjs_escH_/g, "#")
+                    .replace(/_boxjs_escM_/g, "m4_")
+                    .replace(/_boxjs_escE_/g, "_boxjs_esc");
             }
             code = code.replace(/_boxjs_at/g, "@");
         } else {
@@ -1671,7 +1695,9 @@ const sandbox = {
         }
       } else if (typeof func === "string") {
         try {
-          eval(func);
+          // The sandbox's eval, never this file's: a host eval() here ran the
+          // sample's string in the worker's own realm (process, require, fs).
+          sandbox.eval(lib.logJS(func));
         } catch (e) {
           capturedLib.verbose("setInterval string callback error: " + e.message);
         }
@@ -2337,7 +2363,8 @@ const sandbox = {
                       callback.length > 100 ? "..." : ""
                     }`
                   );
-                  eval(callback);
+                  // Sandbox eval, not the host's (see setInterval).
+                  sandbox.eval(lib.logJS(callback));
                 }
               }, 100);
             } catch (e) {

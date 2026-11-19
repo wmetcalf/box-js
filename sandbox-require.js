@@ -200,8 +200,10 @@ const PRELUDE = `(function () {
     });
   };
   EventEmitter.listenerCount = function (emitter, name) { return emitter.listenerCount(name); };
-  // events.on(emitter, name): an async iterator of each emission's arguments.
-  EventEmitter.on = function (emitter, name) {
+  // events.on(emitter, name[, {signal}]): an async iterator of each emission's arguments.
+  // An "error" (or an abort) ends it: the next call rejects, the ones after report done, and
+  // its listeners are removed.
+  EventEmitter.on = function (emitter, name, options) {
     const queue = [];
     const waiting = [];
     let failure = null;
@@ -211,18 +213,33 @@ const PRELUDE = `(function () {
       if (waiting.length) waiting.shift().resolve({value: args, done: false});
       else queue.push(args);
     };
-    const fail = function (err) {
-      failure = err;
-      while (waiting.length) waiting.shift().reject(err);
-    };
-    emitter.on(name, push);
-    if (name !== "error") emitter.on("error", fail);
     const finish = function () {
       done = true;
       emitter.removeListener(name, push);
       emitter.removeListener("error", fail);
-      while (waiting.length) waiting.shift().resolve({value: undefined, done: true});
     };
+    const fail = function (err) {
+      finish();
+      if (waiting.length) {
+        waiting.shift().reject(err);
+        while (waiting.length) waiting.shift().resolve({value: undefined, done: true});
+      } else {
+        failure = err;
+      }
+    };
+    emitter.on(name, push);
+    if (name !== "error") emitter.on("error", fail);
+    const signal = options && options.signal;
+    if (signal && typeof signal.addEventListener === "function") {
+      const abort = function () {
+        const err = new Error("The operation was aborted");
+        err.name = "AbortError";
+        err.code = "ABORT_ERR";
+        fail(err);
+      };
+      if (signal.aborted) abort();
+      else signal.addEventListener("abort", abort);
+    }
     const it = {
       next: function () {
         if (queue.length) return Promise.resolve({value: queue.shift(), done: false});
@@ -236,6 +253,7 @@ const PRELUDE = `(function () {
       },
       return: function () {
         finish();
+        while (waiting.length) waiting.shift().resolve({value: undefined, done: true});
         return Promise.resolve({value: undefined, done: true});
       },
       throw: function (err) {
@@ -288,7 +306,13 @@ function makeZlib() {
         // A preset dictionary (deflate/inflate with one fails without it), copied.
         if (options.dictionary !== undefined && options.dictionary !== null &&
             typeof options.dictionary !== "number") {
-          opts.dictionary = nodeBuffer.Buffer.from(options.dictionary);
+          const dict = options.dictionary;
+          const size = typeof dict === "string" ? dict.length : Number(dict.byteLength !== undefined ? dict.byteLength : dict.length);
+          // zlib windows are at most 32 KiB; refuse anything absurd before copying it.
+          if (!(size >= 0 && size <= 65536)) throw new RangeError("zlib dictionary too large for the sandbox");
+          opts.dictionary = ArrayBuffer.isView(dict) ?
+            nodeBuffer.Buffer.from(new Uint8Array(dict.buffer, dict.byteOffset, dict.byteLength)) :
+            nodeBuffer.Buffer.from(dict);
         }
       }
       const data = typeof input === "string" ? String(input) : nodeBuffer.Buffer.from(input);

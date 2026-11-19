@@ -40,6 +40,9 @@ describe("require_override stubs", function() {
 			"require(\"https\").get(parsed).on(\"error\", function () {});",
 			"require(\"dns\").resolveTxt(\"cmd.c2.example\", function (err) { if (err) require(\"child_process\").execSync(\"dns fallback\"); });",
 			"require(\"node:timers/promises\").setTimeout(10).then(function () { require(\"child_process\").execSync(\"after sleep\"); });",
+			"require(\"dns\").lookup(\"45.133.1.20\", function (err, a) { if (!err) require(\"child_process\").execSync(\"resolved \" + a); });",
+			"var w = require(\"timers\").setTimeout(function () {}, 15000); w.unref(); require(\"child_process\").execSync(\"after unref\");",
+			"(async function () { var n = 0; for await (const _ of require(\"timers/promises\").setInterval(1000)) { if (++n >= 2) break; } require(\"child_process\").execSync(\"interval done\"); })();",
 			"var agent = new (require(\"https\").Agent)({rejectUnauthorized: false});",
 			"var g = require(\"https\").get(new URL(\"https://get.example/g?x=1\"), function () {}); g.on(\"error\", function () {}); g.setTimeout(5000, function () { g.destroy(); });",
 			"require(\"https\").request(\"https://decoy.example/\", {hostname: \"real.example\", path: \"/c2\", agent: agent}, function () {}).end();",
@@ -78,7 +81,7 @@ describe("require_override stubs", function() {
 		}
 	});
 	it("emulates dns failing and timers/promises sleeping", function() {
-		for (const c of ["dns fallback", "after sleep"]) {
+		for (const c of ["dns fallback", "after sleep", "resolved 45.133.1.20", "after unref", "interval done"]) {
 			assert(iocs.some((i) => i.value && i.value.command === c), c);
 		}
 	});

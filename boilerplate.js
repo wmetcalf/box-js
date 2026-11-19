@@ -2667,18 +2667,33 @@ var __boxjs_dns = (function () {
 		   "resolveSrv", "resolveTxt", "reverse"];
     const callbacks = {};
     const promises = {};
+    // lookup() answers IP literals and localhost without a network, as the real one does.
+    function localAnswer(host, opts) {
+	host = String(host);
+	let addr = null, family = 0;
+	if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) { addr = host; family = 4; }
+	else if (/^[0-9a-f:]+$/i.test(host) && host.indexOf(":") >= 0) { addr = host; family = 6; }
+	else if (/^localhost\.?$/i.test(host)) { addr = "127.0.0.1"; family = 4; }
+	if (!addr) return null;
+	const all = !!(opts && typeof opts === "object" && opts.all);
+	return {all, family, value: all ? [{address: addr, family}] : addr};
+    }
     for (const fn of names) {
 	const code = fn === "lookup" || fn === "lookupService" ? "EAI_AGAIN" : "ECONNREFUSED";
 	const log = (host) => logIOC("dns." + fn + "()", {hostname: String(host)},
 				     "The script made a DNS query with dns." + fn + "().");
-	callbacks[fn] = function (host) {
+	callbacks[fn] = function (host, opts) {
 	    log(host);
 	    const cb = Array.prototype.slice.call(arguments, 1).reverse().find((x) => typeof x === "function");
-	    if (cb) later(() => cb(failure(fn, host, code)));
+	    const local = fn === "lookup" ? localAnswer(host, opts) : null;
+	    if (cb) later(() => local ? cb(null, local.value, local.family) : cb(failure(fn, host, code)));
 	};
-	promises[fn] = function (host) {
+	promises[fn] = function (host, opts) {
 	    log(host);
-	    return new Promise((resolve, reject) => later(() => reject(failure(fn, host, code))));
+	    const local = fn === "lookup" ? localAnswer(host, opts) : null;
+	    return new Promise((resolve, reject) => later(() =>
+		local ? resolve(local.all ? local.value : {address: local.value, family: local.family})
+		    : reject(failure(fn, host, code))));
 	};
     }
     function Resolver() {
@@ -2687,29 +2702,67 @@ var __boxjs_dns = (function () {
 	this.getServers = function () { return []; };
 	this.cancel = function () {};
     }
+    Object.assign(promises, {setServers: function () {}, getServers: function () { return []; },
+			     setDefaultResultOrder: function () {}, getDefaultResultOrder: function () { return "verbatim"; }});
     promises.Resolver = function () {
 	Object.assign(this, promises);
 	this.setServers = function () {};
 	this.getServers = function () { return []; };
+	this.cancel = function () {};
     };
     return Object.assign({__name: "_dns", Resolver, promises,
 			  setServers: function () {}, getServers: function () { return []; },
-			  setDefaultResultOrder: function () {}}, callbacks);
+			  setDefaultResultOrder: function () {}, getDefaultResultOrder: function () { return "verbatim"; }},
+			 callbacks);
 })();
 var __boxjs_timers = (function () {
     const later = (f) => (typeof __boxjs_defer === "function" ? __boxjs_defer(f) : Promise.resolve().then(f));
-    const delay = (value) => new Promise((resolve) => later(() => resolve(value)));
+    // A sleep resolves on the next macrotask without waiting; past this many, sleeps never
+    // resolve, so a polling loop stops instead of spinning (like boilerplate's own
+    // setTimeout loop guard).
+    let sleeps = 0;
+    const delay = (value) => {
+	if (++sleeps > 1000) {
+	    if (sleeps === 1001) lib.warning("timers/promises: too many sleeps, stopping the loop");
+	    return new Promise(() => {});
+	}
+	return new Promise((resolve) => later(() => resolve(value)));
+    };
+    // The timers module's own timers are asynchronous (unlike boilerplate's global
+    // setTimeout, which runs the callback at once): the handle exists before the callback
+    // runs, and clearing it cancels the callback. The delay itself is not waited out, and an
+    // interval fires once.
+    function schedule(f, args) {
+	const handle = {
+	    _cleared: false,
+	    ref: function () { return handle; }, unref: function () { return handle; },
+	    hasRef: function () { return true; }, refresh: function () { return handle; },
+	    close: function () { handle._cleared = true; return handle; },
+	    [Symbol.toPrimitive]: function () { return 1; },
+	};
+	if (typeof f === "function") later(() => { if (!handle._cleared) f.apply(null, args); });
+	return handle;
+    }
+    const clear = (h) => { if (h && typeof h === "object") h._cleared = true; };
     return {
-	setTimeout: setTimeout, clearTimeout: clearTimeout, setInterval: setInterval,
-	clearInterval: clearInterval,
-	setImmediate: function (f) {
-	    const args = Array.prototype.slice.call(arguments, 1);
-	    later(() => f.apply(null, args));
-	},
-	clearImmediate: function () {},
+	setTimeout: function (f, ms) { return schedule(f, Array.prototype.slice.call(arguments, 2)); },
+	setInterval: function (f, ms) { return schedule(f, Array.prototype.slice.call(arguments, 2)); },
+	setImmediate: function (f) { return schedule(f, Array.prototype.slice.call(arguments, 1)); },
+	clearTimeout: clear, clearInterval: clear, clearImmediate: clear,
 	promises: {
 	    setTimeout: (ms, value) => delay(value),
 	    setImmediate: (value) => delay(value),
+	    // for await (const v of setInterval(ms, v)): one value per (unwaited) interval.
+	    setInterval: function (ms, value) {
+		let stopped = false;
+		const it = {
+		    next: () => stopped ? Promise.resolve({value: undefined, done: true})
+			: delay(value).then((v) => ({value: v, done: false})),
+		    return: () => { stopped = true; return Promise.resolve({value: undefined, done: true}); },
+		};
+		it[Symbol.asyncIterator] = () => it;
+		return it;
+	    },
 	    scheduler: {wait: () => delay(undefined), yield: () => delay(undefined)},
 	},
     };

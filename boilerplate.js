@@ -2682,7 +2682,8 @@ var __boxjs_dns = (function () {
 	    if (!/^[0-9a-f:]+$/i.test(tail) || (tail.match(/::/g) || []).length > 1 || /:::/.test(tail)) return false;
 	    const groups = tail.split(":");
 	    const empties = tail.indexOf("::") >= 0;
-	    return groups.every((g) => g.length <= 4) && (empties ? groups.length <= 9 : groups.length === 8);
+	    const filled = groups.filter((g) => g !== "").length;
+	    return groups.every((g) => g.length <= 4) && (empties ? filled <= 7 : groups.length === 8);
 	};
 	if (v4(host)) { addr = host; family = 4; }
 	else if (host.indexOf(":") >= 0 && v6(host)) { addr = host; family = 6; }
@@ -2737,17 +2738,29 @@ var __boxjs_timers = (function () {
     let sleeps = 0;
     // A sleep advances the sandbox clock (patch.js's Date offset) by its length, as
     // WScript.Sleep does, so a Date.now()-bounded wait loop reaches its deadline.
-    const advance = (ms) => {
+    // dueAt(ms) when the timer is set, reach(due) when it fires: the clock only moves
+    // forward to the due time, so concurrent sleeps advance it by the longest, not the sum.
+    const dueAt = (ms) => {
 	ms = Number(ms);
-	if (ms > 0 && ms < 1e9 && typeof _globalTimeOffset === "number") _globalTimeOffset += ms;
+	return (ms > 0 && ms < 1e9) ? Date.now() + ms : 0;
+    };
+    const reach = (due) => {
+	if (due && typeof _globalTimeOffset === "number") {
+	    const behind = due - Date.now();
+	    if (behind > 0) _globalTimeOffset += behind;
+	}
     };
     const delay = (value, ms) => {
-	advance(ms);
+	const due = dueAt(ms);
 	if (++sleeps > 10000) {
 	    if (sleeps === 10001) lib.warning("timers/promises: too many sleeps, stopping the loop");
 	    return new Promise(() => {});
 	}
-	return new Promise((resolve) => later(() => resolve(value)));
+	// The clock moves when the sleep ends, not when it is requested.
+	return new Promise((resolve) => later(() => {
+	    reach(due);
+	    resolve(value);
+	}));
     };
     // The timers module's own timers are asynchronous (unlike boilerplate's global
     // setTimeout, which runs the callback at once): the handle exists before the callback
@@ -2755,9 +2768,8 @@ var __boxjs_timers = (function () {
     // interval fires once.
     const live = new Map(); // numeric id -> handle, so clearTimeout(+h) works
     let nextId = 1;
-    // A callback that keeps rescheduling itself (a beacon loop) stops after 300 runs, as
-    // with boilerplate's own setTimeout.
-    const runs = new Map();
+    // (No run cap: a beacon that reschedules itself forever runs until --timeout, as it
+    // did with the real module; a cap cut off loops that end on their own.)
     function schedule(f, args, ms) {
 	const id = nextId++;
 	const handle = {
@@ -2768,21 +2780,17 @@ var __boxjs_timers = (function () {
 	    [Symbol.toPrimitive]: function () { return id; },
 	};
 	live.set(id, handle);
-	if (typeof f === "function") {
-	    const key = String(f);
-	    const n = (runs.get(key) || 0) + 1;
-	    runs.set(key, n);
-	    if (n > 300) {
-		if (n === 301) lib.warning("timers: recursive timer loop detected, stopping it");
-		return handle;
-	    }
-	    later(() => {
-		live.delete(id);
-		if (handle._cleared) return;
-		advance(ms);
-		f.apply(null, args);
-	    });
+	if (typeof f !== "function") {
+	    live.delete(id);
+	    return handle;
 	}
+	const due = dueAt(ms);
+	later(() => {
+	    live.delete(id);
+	    if (handle._cleared) return;
+	    reach(due);
+	    f.apply(null, args);
+	});
 	return handle;
     }
     const clear = (h) => {

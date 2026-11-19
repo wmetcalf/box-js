@@ -63,6 +63,11 @@ describe("conditional compilation (cc_on.js)", function() {
 		const huge = "@if (" + Array(20000).fill("1").join("+") + ") A(); @else B(); @end";
 		assert.strictEqual(run(huge).out, "B();"); // over the step cap
 	});
+	it("leaves directive-like text outside a directive alone", function() {
+		assert.strictEqual(run("var a = \"user@end.example\", b = \"x@if.y\"; c = \"at @end\";").out,
+			"var a = \"user@end.example\", b = \"x@if.y\"; c = \"at @end\";");
+		assert.strictEqual(run("@if (1) var a = \"user@end.example\"; @end").out, "var a = \"user@end.example\";");
+	});
 	it("substitutes after a quote inside a regex", function() {
 		assert.strictEqual(run("@if (1) var r = /\"/; WScript.Echo(@_win32); @end").out, "var r = /\"/; WScript.Echo(true);");
 	});

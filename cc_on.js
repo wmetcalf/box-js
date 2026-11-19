@@ -22,7 +22,8 @@ const DEFAULT_VARS = Object.freeze({
   _x86: true,
 });
 
-const DIRECTIVE = /@(if|elif|else|end|set)(?![\w$])/gi;
+// Not after a word character: "user@end.example" is an address, not a directive.
+const DIRECTIVE = /(?<![\w$@])@(if|elif|else|end|set)(?![\w$])/gi;
 // JScript's @set values are numbers and booleans. Strings are only allowed as literals
 // inside an expression, and bounded, so a sample cannot grow one across @set lines.
 const MAX_STRING = 4096;
@@ -181,6 +182,12 @@ function preprocess(code, warn = () => {}) {
     if (active()) out += substitute(code.slice(pos, m.index), vars);
     let next = m.index + m[0].length;
     const kind = m[1].toLowerCase();
+    // @elif/@else/@end with no open @if are text (e.g. "at @end" in a string).
+    if (stack.length === 0 && (kind === "elif" || kind === "else" || kind === "end")) {
+      if (active()) out += m[0];
+      pos = next;
+      continue;
+    }
     if (kind === "if") {
       const c = readCondition(code, next);
       next = c.end;

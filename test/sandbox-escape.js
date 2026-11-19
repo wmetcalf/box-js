@@ -22,8 +22,9 @@ function runProbe(probe, extraArgs) {
 	const mark = path.join(work, "MARK");
 	const sample = path.join(work, "sample.js");
 	fs.writeFileSync(sample, (helpers + "\n" + fixture(probe)).split("__MARK__").join(mark));
-	// Read only if a preprocessor include escapes; reports itself through the sample's hit().
-	fs.writeFileSync(`${mark}.leak.js`, "\nhit(\"preprocessor-include\");\n");
+	// A real host file the sample must never read back (via a preprocessor include, lib,
+	// the emulated FSO/ADODB or the <a download> handler). Run, it reports itself.
+	fs.writeFileSync(`${mark}.leak.js`, "\nhit(\"host-file-" + "read\");\n");
 	try {
 		execFileSync(process.execPath, [path.join(boxDir, "run.js"), sample, `--output-dir=${work}`,
 			"--no-kill", "--timeout=20", ...extraArgs], {cwd: work, stdio: "ignore", timeout: 90000});
@@ -36,7 +37,12 @@ function runProbe(probe, extraArgs) {
 		urls = JSON.parse(fs.readFileSync(path.join(results, "urls.json"), "utf8"));
 	} catch (e) {}
 	const marks = fs.readdirSync(work).filter((n) => n.startsWith("MARK") && n !== "MARK.leak.js");
-	return {urls, marks};
+	let leaked = [];
+	try {
+		leaked = fs.readdirSync(results).filter((n) =>
+			fs.readFileSync(path.join(results, n), "latin1").includes("host-file-" + "read"));
+	} catch (e) {}
+	return {urls, marks, leaked};
 }
 
 const MODES = [
@@ -45,12 +51,15 @@ const MODES = [
 	// analyze.js's handlers.
 	["default boilerplate (the engine's mode)", ["--prepended-code=default", "--rewrite-loops",
 		"--activex-as-ioc", "--no-shell-error", "--ignore-wscript-quit"], ["setInterval-global", "setTimeout-global"]],
+	// The <a download> handler only saves with --fake-download.
+	["default boilerplate, --fake-download", ["--prepended-code=default", "--no-shell-error",
+		"--ignore-wscript-quit", "--fake-download"], ["setInterval-global", "setTimeout-global"]],
 ];
 const CC_ON = ["m4-syscmd", "m4-prefixed-syscmd", "m4-esyscmd", "m4-include", "cpp-include",
 	"cpp-include-indented", "cpp-include-digraph"];
 
 for (const [label, args, handlers] of MODES) {
-	for (const probe of ["escape-payloads.js", "escape-strings.js"]) {
+	for (const probe of ["escape-payloads.js", "escape-strings.js", "escape-capabilities.js"]) {
 		describe(`sandbox isolation: ${probe}, ${label}`, function() {
 			this.timeout(120000);
 			let run;
@@ -62,6 +71,7 @@ for (const [label, args, handlers] of MODES) {
 				if (probe === "escape-strings.js") {
 					want.push(...handlers.map((h) => "ran-" + h), ...CC_ON.map((c) => "cc-" + c));
 				}
+				if (probe === "escape-capabilities.js") want.push("events-work", "zlib-works", "after-splice");
 				for (const w of want) {
 					assert(run.urls.includes("http://attempted.example/" + w),
 						`probe step ${w} did not run; urls: ` + JSON.stringify(run.urls));
@@ -73,6 +83,9 @@ for (const [label, args, handlers] of MODES) {
 			});
 			it("writes nothing through the host's real fs or child_process", function() {
 				assert.deepStrictEqual(run.marks, []);
+			});
+			it("reads no host file into the results", function() {
+				assert.deepStrictEqual(run.leaked, []);
 			});
 		});
 	}

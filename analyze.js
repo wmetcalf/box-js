@@ -23,7 +23,7 @@ function bomEncoding(buf) {
 }
 const path = require("path");
 const { VM } = require("vm2");
-const { makeSandboxRequire, makeLibFacade } = require("./sandbox-require");
+const { makeSandboxRequire, makeLibFacade, PRELUDE } = require("./sandbox-require");
 const child_process = require("child_process");
 const argv = require("./argv.js").run;
 const jsdom = require("jsdom").JSDOM;
@@ -42,6 +42,8 @@ const { DOMParser } = require("xmldom");
 const stripComments = require("strip-comments");
 
 const filename = process.argv[2];
+// The one real file the emulated script may read back (its own source).
+require("./emulator/FakeFiles").allowRealRead(filename);
 
 // Just check the syntax of the JS sample and exit?
 // Do this early before any lib logging that requires output directory
@@ -1578,7 +1580,10 @@ var wscript_proxy = new Proxy(
 // code shares one scope with the sample, so whatever it can reach the sample can too.
 // See sandbox-require.js.
 const sandboxLib = makeLibFacade(lib);
-const sandboxRequire = makeSandboxRequire(lib, argv);
+const sandboxModules = makeSandboxRequire(lib, argv);
+// Path of the last atob() output saved to the results dir (see atob and the <a download>
+// click handler). Host-side: it used to be a sandbox property the sample could repoint.
+let lastDecodedFile;
 
 const sandbox = {
   // Logging/emulation helpers for in-sandbox code (a frozen facade, not lib itself).
@@ -1994,7 +1999,7 @@ const sandbox = {
     return out;
   },
   self: {},
-  require: sandboxRequire,
+  require: sandboxModules.require,
   atob: function (str) {
     try {
       // Make sure we have a valid string and handle all edge cases
@@ -2041,8 +2046,8 @@ const sandbox = {
 
         // Store the absolute filepath in the sandbox itself as a property
         // This makes it accessible to the click handler
-        sandbox.lastDecodedFile = filepath;
-        global.lastDecodedFile = filepath; // Also store in global for redundancy
+        // Host-side only: the click handler reads this path, so the sample must not set it.
+        lastDecodedFile = filepath;
 
         // For display in logs
         const decoded = buffer.toString("binary");
@@ -2242,32 +2247,14 @@ const sandbox = {
             // This is the actual .results directory that box-js creates
             const outputDir = process.argv[3] || "./";
 
-            // Try to use the last decoded content from atob if available
-            if (
-              sandbox.lastDecodedFile &&
-              typeof sandbox.lastDecodedFile === "string"
-            ) {
+            // The last atob() output box-js itself saved (host-side, not sample-settable).
+            if (typeof lastDecodedFile === "string") {
               try {
-                lib.verbose(
-                  `Using lastDecodedFile: ${sandbox.lastDecodedFile}`
-                );
-                fileData = fs.readFileSync(sandbox.lastDecodedFile);
+                lib.verbose(`Using lastDecodedFile: ${lastDecodedFile}`);
+                fileData = fs.readFileSync(lastDecodedFile);
                 contentToSave = fileData;
               } catch (e) {
                 lib.error(`Error reading lastDecodedFile: ${e.message}`);
-              }
-            } else if (
-              global.lastDecodedFile &&
-              typeof global.lastDecodedFile === "string"
-            ) {
-              try {
-                lib.verbose(
-                  `Using global.lastDecodedFile: ${global.lastDecodedFile}`
-                );
-                fileData = fs.readFileSync(global.lastDecodedFile);
-                contentToSave = fileData;
-              } catch (e) {
-                lib.error(`Error reading global.lastDecodedFile: ${e.message}`);
               }
             }
 
@@ -2284,7 +2271,10 @@ const sandbox = {
                 .digest("hex");
 
               // Use the specified download filename but add extension if missing
-              let downloadFilename = this.download || "download.bin";
+              // A plain file name: `download` comes from the sample ("../../x" or an
+              // absolute path would otherwise land outside the results dir).
+              let downloadFilename = String(this.download || "download.bin")
+                .replace(/[^0-9A-Za-z._-]/g, "_").replace(/^\.+/, "_").slice(0, 128);
 
               // Save the file to the output directory with the download name
               const filepath = path.resolve(
@@ -2828,6 +2818,8 @@ if (argv["dangerous-vm"]) {
   });
   // Captured before the sample runs; see string-realms.js.
   registerStringRealm(vm.run('"".valueOf'));
+  // events and util.inherits are built in the sandbox's realm; see sandbox-require.js.
+  sandboxModules.installPrelude(vm.run(PRELUDE));
 
   // Fake cscript.exe style ReferenceError messages.
   code =
@@ -2951,6 +2943,7 @@ if (argv["dangerous-vm"]) {
           sandbox,
         });
         registerStringRealm(fallbackVm.run('"".valueOf'));
+        sandboxModules.installPrelude(fallbackVm.run(PRELUDE));
         fallbackVm.run(originalCode);
         lib.info("Fallback execution successful");
         return;
@@ -2991,6 +2984,7 @@ if (argv["dangerous-vm"]) {
           sandbox,
         });
         registerStringRealm(fallbackVm.run('"".valueOf'));
+        sandboxModules.installPrelude(fallbackVm.run(PRELUDE));
 
         fallbackVm.run(originalCode);
         lib.info("Fallback execution successful");

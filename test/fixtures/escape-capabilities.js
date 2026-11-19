@@ -19,9 +19,16 @@ attempt("module-shapes", function () {
     var zl = require("zlib");
     var round = zl.inflateSync(zl.deflateSync(Buffer.from("zlib-roundtrip"))).toString();
     if (round === "zlib-roundtrip") url("http://attempted.example/zlib-works");
+    zl.gunzip(zl.gzipSync("zlib-callback"), function (e, buf) {
+      if (!e && String(buf) === "zlib-callback") url("http://attempted.example/zlib-callback-works");
+    });
+  } catch (err) {}
+  try {
+    if (typeof E.getEventListeners === "function" && typeof E.setMaxListeners === "function" &&
+        typeof E.once === "function" && E.defaultMaxListeners === 10) url("http://attempted.example/events-statics");
   } catch (err) {}
   // The host module carries members the sandbox's own EventEmitter does not.
-  try { if (typeof E.getEventListeners === "function" || E.errorMonitor !== undefined) hit("events-host-module"); } catch (err) {}
+  try { if (typeof E.init === "function" || typeof E.usingDomains === "boolean") hit("events-host-module"); } catch (err) {}
 });
 attempt("path-self-reference", function () {
   // If any of these is the host's real path module, lib's next results-file write lands on

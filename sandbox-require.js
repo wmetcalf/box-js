@@ -187,6 +187,15 @@ const PRELUDE = `(function () {
     });
   };
   EventEmitter.listenerCount = function (emitter, name) { return emitter.listenerCount(name); };
+  EventEmitter.getEventListeners = function (emitter, name) { return emitter.listeners(name); };
+  EventEmitter.setMaxListeners = function (n) {
+    const emitters = Array.prototype.slice.call(arguments, 1);
+    if (emitters.length === 0) EventEmitter.defaultMaxListeners = n;
+    emitters.forEach(function (e) { e.setMaxListeners(n); });
+  };
+  EventEmitter.errorMonitor = Symbol("events.errorMonitor");
+  EventEmitter.captureRejectionSymbol = Symbol.for("nodejs.rejection");
+  EventEmitter.captureRejections = false;
   function inherits(ctor, superCtor) {
     if (typeof ctor !== "function") throw new TypeError("The \\"ctor\\" argument must be of type function");
     if (typeof superCtor !== "function" || superCtor.prototype === undefined) {
@@ -225,6 +234,28 @@ function makeZlib() {
       return copy;
     };
   }
+  // Callback forms (zlib.inflate(buf[, opts], cb)), as droppers also use them; same
+  // computation, result delivered on a later tick like node's. Streams are not offered.
+  for (const name of ZLIB_SYNC) {
+    const sync = out[name];
+    if (!sync) continue;
+    const asyncName = name.slice(0, -4);
+    out[asyncName] = function (input, options, callback) {
+      if (typeof options === "function") {
+        callback = options;
+        options = undefined;
+      }
+      if (typeof callback !== "function") throw new TypeError("The \"callback\" argument must be of type function");
+      let error = null;
+      let result;
+      try {
+        result = sync(input, options);
+      } catch (e) {
+        error = e;
+      }
+      setImmediate(() => callback(error, result));
+    };
+  }
   out.constants = freezeCopy(nodeZlib.constants);
   return Object.freeze(out);
 }
@@ -257,6 +288,8 @@ function bindAll(target, names) {
 
 function makeWebcrypto() {
   const wc = nodeCrypto.webcrypto;
+  // package.json allows node >= 10; webcrypto arrived in 15.
+  if (!wc || !wc.subtle) return Object.freeze(Object.create(null));
   const subtle = Object.freeze(bindAll(wc.subtle, [
     "decrypt", "deriveBits", "deriveKey", "digest", "encrypt", "exportKey", "generateKey",
     "importKey", "sign", "unwrapKey", "verify", "wrapKey",

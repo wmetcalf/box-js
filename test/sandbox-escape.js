@@ -17,6 +17,19 @@ const boxDir = path.join(__dirname, "..");
 const fixture = (name) => fs.readFileSync(path.join(__dirname, "fixtures", name), "utf8");
 const helpers = fixture("escape-helpers.js");
 
+// The @cc_on/@if payloads in escape-strings.js only reach m4 and cpp when both are
+// installed; without them box-js skips the rewrite and those payloads prove nothing. Say
+// so instead of passing (and fail under CI, which must have them).
+function has(bin) {
+	try {
+		execFileSync("sh", ["-c", `command -v ${bin}`], {stdio: "ignore"});
+		return true;
+	} catch (e) {
+		return false;
+	}
+}
+const ccToolchain = has("m4") && has("cc");
+
 function runProbe(probe, extraArgs) {
 	const work = fs.mkdtempSync(path.join(os.tmpdir(), "boxjs-escape-"));
 	const mark = path.join(work, "MARK");
@@ -66,12 +79,22 @@ for (const [label, args, handlers] of MODES) {
 			before(function() {
 				run = runProbe(probe, args);
 			});
+			if (probe === "escape-strings.js") {
+				it("has m4 and cc, so the @cc_on payloads reach them", function() {
+					if (ccToolchain) return;
+					if (process.env.CI) assert.fail("m4 and cc are required for the @cc_on escape payloads");
+					this.skip();
+				});
+			}
 			it("runs every escape attempt to the end", function() {
 				const want = ["done"];
 				if (probe === "escape-strings.js") {
-					want.push(...handlers.map((h) => "ran-" + h), ...CC_ON.map((c) => "cc-" + c));
+					want.push(...handlers.map((h) => "ran-" + h));
+					if (ccToolchain) want.push(...CC_ON.map((c) => "cc-" + c));
 				}
-				if (probe === "escape-capabilities.js") want.push("events-work", "zlib-works", "after-splice");
+				if (probe === "escape-capabilities.js") {
+					want.push("events-work", "events-statics", "zlib-works", "zlib-callback-works", "after-splice");
+				}
 				for (const w of want) {
 					assert(run.urls.includes("http://attempted.example/" + w),
 						`probe step ${w} did not run; urls: ` + JSON.stringify(run.urls));

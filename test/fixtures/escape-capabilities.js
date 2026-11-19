@@ -38,6 +38,16 @@ attempt("module-shapes", function () {
   // The host module carries members the sandbox's own EventEmitter does not.
   try { if (typeof E.init === "function" || typeof E.usingDomains === "boolean") hit("events-host-module"); } catch (err) {}
 });
+attempt("buffer-pool", function () {
+  // A pooled Buffer's backing store holds other host data.
+  function check(name, b) {
+    try { if (b && b.buffer && b.buffer.byteLength > 1024) hit("buffer-pool-" + name); } catch (err) {}
+  }
+  try { check("from", Buffer.from("x")); } catch (err) {}
+  try { check("module", require("buffer").Buffer.from("x")); } catch (err) {}
+  try { check("digest", require("crypto").createHash("sha256").update("x").digest()); } catch (err) {}
+  try { check("random", require("crypto").randomBytes(4)); } catch (err) {}
+});
 attempt("path-self-reference", function () {
   // If any of these is the host's real path module, lib's next results-file write lands on
   // the sample's chosen path.

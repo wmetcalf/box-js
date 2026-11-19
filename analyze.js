@@ -43,6 +43,10 @@ const { DOMParser } = require("xmldom");
 const stripComments = require("strip-comments");
 
 const filename = process.argv[2];
+// Small Buffers are normally slices of a shared 8 KiB pool, and the sandbox can read a
+// Buffer's whole backing ArrayBuffer (buf.buffer), i.e. whatever else the host put in that
+// pool. Unpooled, each Buffer the sandbox sees backs only its own bytes.
+Buffer.poolSize = 0;
 // The one real file the emulated script may read back (its own source).
 require("./emulator/FakeFiles").allowRealRead(filename);
 

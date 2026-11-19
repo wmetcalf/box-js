@@ -23,7 +23,6 @@ const DEFAULT_VARS = Object.freeze({
 });
 
 const DIRECTIVE = /@(if|elif|else|end|set)(?![\w$])/gi;
-const NAME = /[A-Za-z_$][\w$]*/y;
 // JScript's @set values are numbers and booleans. Strings are only allowed as literals
 // inside an expression, and bounded, so a sample cannot grow one across @set lines.
 const MAX_STRING = 4096;
@@ -139,42 +138,17 @@ function evaluate(text, vars) {
   return v;
 }
 
-// Replace @name in active code with the variable's value, as JScript does; unknown names
-// and anything inside a string literal are left as they are. String state is tracked in
-// one forward pass and reset at each line end (strings do not span lines, so a quote in a
-// comment or regex can only mislead the rest of its own line); "//" and "/* */" on a line
-// are code here, since that is where //@ conditional comments live.
+// Replace @name in active code with the variable's value, as JScript does. Unknown names
+// are left as they are, and so is an @ that follows a word character ("user@_win32.example"
+// in a string): a conditional-compilation variable in code never does. String literals are
+// not tracked: a quote in a regex would hide every later variable on its line, leaving a
+// bare "@name" that fails to parse.
 function substitute(text, vars) {
-  let out = "";
-  let quote = null;
-  let i = 0;
-  while (i < text.length) {
-    const c = text[i];
-    if (c === "\n") {
-      quote = null;
-    } else if (quote) {
-      if (c === "\\" && text[i + 1] !== "\n") {
-        out += c + (text[i + 1] || "");
-        i += 2;
-        continue;
-      }
-      if (c === quote) quote = null;
-    } else if (c === "\"" || c === "'" || c === "`") {
-      quote = c;
-    } else if (c === "@") {
-      NAME.lastIndex = i + 1;
-      const m = NAME.exec(text);
-      if (m && Object.prototype.hasOwnProperty.call(vars, m[0])) {
-        const v = vars[m[0]];
-        out += typeof v === "number" && Number.isNaN(v) ? "NaN" : String(v);
-        i = NAME.lastIndex;
-        continue;
-      }
-    }
-    out += c;
-    i++;
-  }
-  return out;
+  return text.replace(/(^|[^\w$@])@([A-Za-z_$][\w$]*)/g, (m, pre, name) => {
+    if (!Object.prototype.hasOwnProperty.call(vars, name)) return m;
+    const v = vars[name];
+    return pre + (typeof v === "number" && Number.isNaN(v) ? "NaN" : String(v));
+  });
 }
 
 // `code` has had /*@cc_on, @cc_on, /*@ and @*/ removed already. `warn` gets a message
@@ -183,7 +157,14 @@ function preprocess(code, warn = () => {}) {
   const vars = Object.assign(Object.create(null), DEFAULT_VARS);
   // One frame per open @if: whether this level emits code, and whether a branch was taken.
   const stack = [];
-  const active = () => stack.every((f) => f.on);
+  // Number of open frames that are off: the code is live when there are none. (Checking
+  // every frame per directive was quadratic in the nesting depth.)
+  let off = 0;
+  const active = () => off === 0;
+  const setOn = (f, on) => {
+    if (f.on !== on) off += on ? -1 : 1;
+    f.on = on;
+  };
   let out = "";
   let pos = 0;
   function cond(text) {
@@ -206,23 +187,25 @@ function preprocess(code, warn = () => {}) {
       const parentOn = active();
       const on = parentOn && cond(c.text);
       stack.push({on, taken: on, parentOn});
+      if (!on) off++;
     } else if (kind === "elif") {
       const c = readCondition(code, next);
       next = c.end;
       const f = stack[stack.length - 1];
       if (f) {
         const on = f.parentOn && !f.taken && cond(c.text);
-        f.on = on;
+        setOn(f, on);
         f.taken = f.taken || on;
       }
     } else if (kind === "else") {
       const f = stack[stack.length - 1];
       if (f) {
-        f.on = f.parentOn && !f.taken;
+        setOn(f, f.parentOn && !f.taken);
         f.taken = true;
       }
     } else if (kind === "end") {
-      stack.pop();
+      const f = stack.pop();
+      if (f && !f.on) off--;
     } else if (kind === "set") {
       // @set @name = expression (to the end of the line or a ";")
       let i = next;

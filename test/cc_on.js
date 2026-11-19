@@ -63,6 +63,16 @@ describe("conditional compilation (cc_on.js)", function() {
 		const huge = "@if (" + Array(20000).fill("1").join("+") + ") A(); @else B(); @end";
 		assert.strictEqual(run(huge).out, "B();"); // over the step cap
 	});
+	it("substitutes after a quote inside a regex", function() {
+		assert.strictEqual(run("@if (1) var r = /\"/; WScript.Echo(@_win32); @end").out, "var r = /\"/; WScript.Echo(true);");
+	});
+	it("is linear in the nesting depth", function() {
+		const n = 80000;
+		const t = Date.now();
+		const r = run("@if (1) ".repeat(n) + "A();" + " @end".repeat(n));
+		assert.strictEqual(r.out, "A();");
+		assert(Date.now() - t < 5000, `took ${Date.now() - t} ms`);
+	});
 	it("starts no process", function() {
 		const names = ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork"];
 		const saved = names.map((n) => child_process[n]);

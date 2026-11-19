@@ -2671,8 +2671,21 @@ var __boxjs_dns = (function () {
     function localAnswer(host, opts) {
 	host = String(host);
 	let addr = null, family = 0;
-	if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) { addr = host; family = 4; }
-	else if (/^[0-9a-f:]+$/i.test(host) && host.indexOf(":") >= 0) { addr = host; family = 6; }
+	const v4 = (h) => /^\d{1,3}(\.\d{1,3}){3}$/.test(h) && h.split(".").every((o) => Number(o) <= 255);
+	const v6 = (h) => {
+	    let tail = h;
+	    const m = /^(.*:)(\d{1,3}(?:\.\d{1,3}){3})$/.exec(h); // ::ffff:1.2.3.4
+	    if (m) {
+		if (!v4(m[2])) return false;
+		tail = m[1] + "0:0";
+	    }
+	    if (!/^[0-9a-f:]+$/i.test(tail) || (tail.match(/::/g) || []).length > 1 || /:::/.test(tail)) return false;
+	    const groups = tail.split(":");
+	    const empties = tail.indexOf("::") >= 0;
+	    return groups.every((g) => g.length <= 4) && (empties ? groups.length <= 9 : groups.length === 8);
+	};
+	if (v4(host)) { addr = host; family = 4; }
+	else if (host.indexOf(":") >= 0 && v6(host)) { addr = host; family = 6; }
 	else if (/^localhost\.?$/i.test(host)) { addr = "127.0.0.1"; family = 4; }
 	if (!addr) return null;
 	const all = !!(opts && typeof opts === "object" && opts.all);
@@ -2686,7 +2699,8 @@ var __boxjs_dns = (function () {
 	    log(host);
 	    const cb = Array.prototype.slice.call(arguments, 1).reverse().find((x) => typeof x === "function");
 	    const local = fn === "lookup" ? localAnswer(host, opts) : null;
-	    if (cb) later(() => local ? cb(null, local.value, local.family) : cb(failure(fn, host, code)));
+	    if (cb) later(() => local ? (local.all ? cb(null, local.value) : cb(null, local.value, local.family))
+				 : cb(failure(fn, host, code)));
 	};
 	promises[fn] = function (host, opts) {
 	    log(host);
@@ -2719,11 +2733,18 @@ var __boxjs_timers = (function () {
     const later = (f) => (typeof __boxjs_defer === "function" ? __boxjs_defer(f) : Promise.resolve().then(f));
     // A sleep resolves on the next macrotask without waiting; past this many, sleeps never
     // resolve, so a polling loop stops instead of spinning (like boilerplate's own
-    // setTimeout loop guard).
+    // setTimeout loop guard). The cap is per analysis.
     let sleeps = 0;
-    const delay = (value) => {
-	if (++sleeps > 1000) {
-	    if (sleeps === 1001) lib.warning("timers/promises: too many sleeps, stopping the loop");
+    // A sleep advances the sandbox clock (patch.js's Date offset) by its length, as
+    // WScript.Sleep does, so a Date.now()-bounded wait loop reaches its deadline.
+    const advance = (ms) => {
+	ms = Number(ms);
+	if (ms > 0 && ms < 1e9 && typeof _globalTimeOffset === "number") _globalTimeOffset += ms;
+    };
+    const delay = (value, ms) => {
+	advance(ms);
+	if (++sleeps > 10000) {
+	    if (sleeps === 10001) lib.warning("timers/promises: too many sleeps, stopping the loop");
 	    return new Promise(() => {});
 	}
 	return new Promise((resolve) => later(() => resolve(value)));
@@ -2732,32 +2753,56 @@ var __boxjs_timers = (function () {
     // setTimeout, which runs the callback at once): the handle exists before the callback
     // runs, and clearing it cancels the callback. The delay itself is not waited out, and an
     // interval fires once.
-    function schedule(f, args) {
+    const live = new Map(); // numeric id -> handle, so clearTimeout(+h) works
+    let nextId = 1;
+    // A callback that keeps rescheduling itself (a beacon loop) stops after 300 runs, as
+    // with boilerplate's own setTimeout.
+    const runs = new Map();
+    function schedule(f, args, ms) {
+	const id = nextId++;
 	const handle = {
 	    _cleared: false,
 	    ref: function () { return handle; }, unref: function () { return handle; },
 	    hasRef: function () { return true; }, refresh: function () { return handle; },
 	    close: function () { handle._cleared = true; return handle; },
-	    [Symbol.toPrimitive]: function () { return 1; },
+	    [Symbol.toPrimitive]: function () { return id; },
 	};
-	if (typeof f === "function") later(() => { if (!handle._cleared) f.apply(null, args); });
+	live.set(id, handle);
+	if (typeof f === "function") {
+	    const key = String(f);
+	    const n = (runs.get(key) || 0) + 1;
+	    runs.set(key, n);
+	    if (n > 300) {
+		if (n === 301) lib.warning("timers: recursive timer loop detected, stopping it");
+		return handle;
+	    }
+	    later(() => {
+		live.delete(id);
+		if (handle._cleared) return;
+		advance(ms);
+		f.apply(null, args);
+	    });
+	}
 	return handle;
     }
-    const clear = (h) => { if (h && typeof h === "object") h._cleared = true; };
+    const clear = (h) => {
+	if (typeof h === "number" || typeof h === "string") h = live.get(Number(h));
+	if (h && typeof h === "object") h._cleared = true;
+    };
     return {
-	setTimeout: function (f, ms) { return schedule(f, Array.prototype.slice.call(arguments, 2)); },
-	setInterval: function (f, ms) { return schedule(f, Array.prototype.slice.call(arguments, 2)); },
-	setImmediate: function (f) { return schedule(f, Array.prototype.slice.call(arguments, 1)); },
+	setTimeout: function (f, ms) { return schedule(f, Array.prototype.slice.call(arguments, 2), ms); },
+	setInterval: function (f, ms) { return schedule(f, Array.prototype.slice.call(arguments, 2), ms); },
+	setImmediate: function (f) { return schedule(f, Array.prototype.slice.call(arguments, 1), 0); },
 	clearTimeout: clear, clearInterval: clear, clearImmediate: clear,
 	promises: {
-	    setTimeout: (ms, value) => delay(value),
+	    setTimeout: (ms, value) => delay(value, ms),
 	    setImmediate: (value) => delay(value),
 	    // for await (const v of setInterval(ms, v)): one value per (unwaited) interval.
 	    setInterval: function (ms, value) {
 		let stopped = false;
 		const it = {
 		    next: () => stopped ? Promise.resolve({value: undefined, done: true})
-			: delay(value).then((v) => ({value: v, done: false})),
+			: delay(value, ms).then((v) => ({value: v, done: false})),
 		    return: () => { stopped = true; return Promise.resolve({value: undefined, done: true}); },
 		};
 		it[Symbol.asyncIterator] = () => it;

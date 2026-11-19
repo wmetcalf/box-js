@@ -213,12 +213,18 @@ const PRELUDE = `(function () {
       if (waiting.length) waiting.shift().resolve({value: args, done: false});
       else queue.push(args);
     };
+    let unabort = function () {};
     const finish = function () {
       done = true;
-      emitter.removeListener(name, push);
-      emitter.removeListener("error", fail);
+      // (box-js's own stubs, e.g. process.on, have no removeListener.)
+      if (typeof emitter.removeListener === "function") {
+        emitter.removeListener(name, push);
+        emitter.removeListener("error", fail);
+      }
+      unabort();
     };
     const fail = function (err) {
+      if (done) return;
       finish();
       if (waiting.length) {
         waiting.shift().reject(err);
@@ -238,7 +244,12 @@ const PRELUDE = `(function () {
         fail(err);
       };
       if (signal.aborted) abort();
-      else signal.addEventListener("abort", abort);
+      else {
+        signal.addEventListener("abort", abort);
+        unabort = function () {
+          if (typeof signal.removeEventListener === "function") signal.removeEventListener("abort", abort);
+        };
+      }
     }
     const it = {
       next: function () {

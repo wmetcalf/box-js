@@ -111,6 +111,22 @@ describe("conditional compilation (cc_on.js)", function() {
 		// A division is not a regex: the @if after it is still found.
 		assert.strictEqual(run("var h = w / 2; @if (@_win32) A(); @end").out, "var h = w / 2; A();");
 	});
+	it("does not let a misread / or quote hide later directives", function() {
+		const cases = [
+			["if (x) /\"/ .test(y); @if (@_win32) A(); @end\nB();", "if (x) /\"/ .test(y); A(); B();"],
+			["var x = {} / 2; @if (1) A(); @end", "var x = {} / 2; A();"],
+			["var x = (a+b)/2; @if (@_win32) A(); @end", "var x = (a+b)/2; A();"],
+			["return x /y/ 2; @if (1) E(); @end", "return x /y/ 2; E();"],
+			["/*@if (1) Q(); @end*/ var q = @_win32; var z = a/b;", "/* Q(); */ var q = true; var z = a/b;"],
+			["//" + " ".repeat(70) + "@if (1) A(); @end", "// A();"],
+		];
+		for (const [src, want] of cases) assert.strictEqual(run(src).out, want, src);
+	});
+	it("treats template ${...} as code", function() {
+		assert.strictEqual(run("var s = `x${@_win32}`;").out, "var s = `x${true}`;");
+		assert.strictEqual(run("x = `t ${`n ${@_x86}`} @if`; @if (1) F(); @end").out, "x = `t ${`n ${true}`} @if`; F();");
+		assert.strictEqual(run("var s = `a${ {b:1}.b }c`; @if (1) D(@_win32); @end").out, "var s = `a${ {b:1}.b }c`; D(true);");
+	});
 	it("starts no process", function() {
 		const names = ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork"];
 		const saved = names.map((n) => child_process[n]);

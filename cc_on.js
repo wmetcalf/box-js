@@ -44,75 +44,165 @@ const REGEX_KEYWORDS = new Set(["return", "typeof", "case", "do", "else", "in", 
 function codeMask(text) {
   const n = text.length;
   const mask = new Uint8Array(n);
-  let prev = "";
-  let word = "";
+  const isWord = (ch) => /[\w$]/.test(ch);
+  const isNewline = (ch) => ch === "\n" || ch === "\r";
+  let prev = ""; // last non-blank code character
+  let word = ""; // the identifier that ends at prev, if prev is a word character
+  let gap = false; // blank space since prev
+  // Open template literals whose ${...} we are in: brace depth inside each.
+  const templates = [];
   let i = 0;
-  const skipTo = (end) => {
-    for (; i < end; i++) mask[i] = 1;
+  const atAt = (k) => {
+    // Comment text starting with "@" (after blanks): conditional-compilation code.
+    while (k < n && (text[k] === " " || text[k] === "\t")) k++;
+    return text[k] === "@";
+  };
+  const markRange = (a, b) => {
+    for (let k = a; k < b; k++) mask[k] = 1;
+  };
+  // Mask a template literal's text from i (just after a backtick or a closing "}") to its
+  // end or its next "${"; returns true if it stopped at "${".
+  const templateText = () => {
+    while (i < n) {
+      const d = text[i];
+      if (d === "\\") {
+        mask[i++] = 1;
+        if (i < n) mask[i++] = 1;
+        continue;
+      }
+      if (d === "`") {
+        mask[i++] = 1;
+        return false;
+      }
+      if (d === "$" && text[i + 1] === "{") {
+        mask[i++] = 1;
+        mask[i++] = 1;
+        return true;
+      }
+      mask[i++] = 1;
+    }
+    return false;
   };
   while (i < n) {
     const c = text[i];
-    if (/[\w$]/.test(c)) {
-      word = (prev && /[\w$]/.test(prev) ? word : "") + c;
+    if (isWord(c)) {
+      word = (!gap && isWord(prev) ? word : "") + c;
       prev = c;
+      gap = false;
       i++;
       continue;
     }
-    if (c === "\"" || c === "'" || c === "`") {
-      mask[i++] = 1;
-      // (A template literal may span lines; it is masked whole, ${...} included.)
-      while (i < n && text[i] !== c && (c === "`" || (text[i] !== "\n" && text[i] !== "\r"))) {
-        if (text[i] === "\\" && i + 1 < n) {
-          // An escape, or a line continuation (backslash + LF, CR or CRLF).
-          mask[i++] = 1;
-          if (text[i] === "\r" && text[i + 1] === "\n") mask[i++] = 1;
-        }
-        mask[i++] = 1;
-      }
-      if (i < n && text[i] === c) mask[i++] = 1;
-      prev = "a";
-      word = "";
+    if (/\s/.test(c)) {
+      gap = true;
+      i++;
       continue;
     }
+    if (templates.length && (c === "{" || c === "}")) {
+      if (c === "{") templates[templates.length - 1]++;
+      else if (templates[templates.length - 1]-- === 0) {
+        templates.pop();
+        mask[i++] = 1;
+        if (templateText()) templates.push(0);
+        prev = "a";
+        word = "";
+        gap = false;
+        continue;
+      }
+    }
+    if (c === "`") {
+      mask[i++] = 1;
+      if (templateText()) templates.push(0);
+      prev = "a";
+      word = "";
+      gap = false;
+      continue;
+    }
+    if (c === "\"" || c === "'") {
+      // A string that does not close on its line (backslash continuations aside) is not
+      // one: leave the quote as code rather than mask the rest of the line.
+      const start = i;
+      let k = i + 1;
+      let closed = false;
+      while (k < n && !isNewline(text[k])) {
+        if (text[k] === "\\" && k + 1 < n) {
+          k += text[k + 1] === "\r" && text[k + 2] === "\n" ? 3 : 2;
+          continue;
+        }
+        if (text[k] === c) {
+          closed = true;
+          break;
+        }
+        k++;
+      }
+      if (closed) {
+        markRange(start, k + 1);
+        i = k + 1;
+        prev = "a";
+        word = "";
+        gap = false;
+        continue;
+      }
+    }
     if (c === "/" && text[i + 1] === "/") {
-      if (/^[ \t]*@/.test(text.slice(i + 2, i + 66))) {
+      if (atAt(i + 2)) {
         i += 2;
         continue;
       }
-      const e = text.indexOf("\n", i);
-      skipTo(e < 0 ? n : e);
+      let e = i;
+      while (e < n && !isNewline(text[e])) e++;
+      markRange(i, e);
+      i = e;
       continue;
     }
     if (c === "/" && text[i + 1] === "*") {
-      if (/^[ \t]*@/.test(text.slice(i + 2, i + 66))) {
+      if (atAt(i + 2)) {
         i += 2;
         continue;
       }
       const e = text.indexOf("*/", i + 2);
-      skipTo(e < 0 ? n : e + 2);
+      const end = e < 0 ? n : e + 2;
+      markRange(i, end);
+      i = end;
       continue;
     }
-    if (c === "/" && (prev === "" || REGEX_AFTER.test(prev) ||
-        (/[\w$]/.test(prev) && REGEX_KEYWORDS.has(word)))) {
-      mask[i++] = 1;
+    if (c === "*" && text[i + 1] === "/") {
+      // The end of a /*@ ... comment kept as code: not a multiplication and a regex.
+      i += 2;
+      continue;
+    }
+    if (c === "/" && (prev === "" || REGEX_AFTER.test(prev) || (isWord(prev) && REGEX_KEYWORDS.has(word)))) {
+      // A regex that does not close on its line is a division after all.
+      let k = i + 1;
       let inClass = false;
-      while (i < n && text[i] !== "\n") {
-        const d = text[i];
-        mask[i++] = 1;
-        if (d === "\\" && i < n && text[i] !== "\n") mask[i++] = 1;
-        else if (d === "[") inClass = true;
+      let closed = false;
+      while (k < n && !isNewline(text[k])) {
+        const d = text[k];
+        if (d === "\\") {
+          k += 2;
+          continue;
+        }
+        if (d === "[") inClass = true;
         else if (d === "]") inClass = false;
-        else if (d === "/" && !inClass) break;
+        else if (d === "/" && !inClass) {
+          closed = true;
+          break;
+        }
+        k++;
       }
-      while (i < n && /[a-z]/i.test(text[i])) mask[i++] = 1;
-      prev = "a";
-      word = "";
-      continue;
+      if (closed) {
+        k++;
+        while (k < n && /[a-z]/i.test(text[k])) k++;
+        markRange(i, k);
+        i = k;
+        prev = "a";
+        word = "";
+        gap = false;
+        continue;
+      }
     }
-    if (!/\s/.test(c)) {
-      prev = c;
-      word = "";
-    }
+    prev = c;
+    word = "";
+    gap = false;
     i++;
   }
   return mask;

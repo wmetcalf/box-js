@@ -29,7 +29,7 @@ function useReq(name, r) {
   // A member only the real module has (require_override.js hands out stubs for some ids).
   var real = {
     vm: "runInThisContext", module: "createRequire", worker_threads: "Worker", inspector: "Session",
-    v8: "setFlagsFromString", net: "isIP", http: "globalAgent", https: "globalAgent",
+    v8: "setFlagsFromString", net: "isIP", http: "globalAgent", https: "createServer",
     dgram: "createSocket", dns: "lookup", tls: "connect", zlib: "createInflate",
     child_process: "execFileSync", fs: "openSync", os: "setPriority",
   };

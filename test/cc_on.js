@@ -58,10 +58,23 @@ describe("conditional compilation (cc_on.js)", function() {
 		assert.strictEqual(r.out, "B();");
 		assert.strictEqual(r.warnings.length, 1);
 		const big = "\"" + "y".repeat(3000) + "\"";
-		const r2 = run(`@if ((${big} + ${big}).length) A(); @else B(); @end`);
-		assert.strictEqual(r2.out, "B();");
-		const huge = "@if (" + Array(20000).fill("1").join("+") + ") A(); @else B(); @end";
-		assert.strictEqual(run(huge).out, "B();"); // over the step cap
+		const r2 = run(`@if ((${big} + ${big}) == (${big} + ${big})) A(); @else B(); @end`);
+		assert.strictEqual(r2.out, "B();"); // over the string cap
+		let tree = "1";
+		for (let i = 0; i < 14; i++) tree = `(${tree}+${tree})`;
+		assert.strictEqual(run(`@if (${tree}) A(); @else B(); @end`).out, "B();"); // over the step cap
+	});
+	it("treats @set and directives inside string literals as text, linearly", function() {
+		assert.strictEqual(run("f.WriteLine(\"@cc_on\"); f.WriteLine(\"@set @debug = 0\"); g();").out,
+			"f.WriteLine(\"@cc_on\"); f.WriteLine(\"@set @debug = 0\"); g();");
+		const t = Date.now();
+		const pad = "var pad = \"" + "@set ".repeat(80000) + "\";";
+		assert.strictEqual(preprocess(pad), pad);
+		assert(Date.now() - t < 5000, `took ${Date.now() - t} ms`);
+	});
+	it("makes predefined-namespace names NaN in code", function() {
+		assert.strictEqual(run("@if (@_win32) var p = @_win16 ? 16 : 32; @end").out, "var p = NaN ? 16 : 32;");
+		assert.strictEqual(run("@if (1) var css = \" @media x\"; @end").out, "var css = \" @media x\";");
 	});
 	it("leaves directive-like text outside a directive alone", function() {
 		assert.strictEqual(run("var a = \"user@end.example\", b = \"x@if.y\"; c = \"at @end\";").out,

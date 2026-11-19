@@ -1982,6 +1982,7 @@ const sandbox = {
         // Create a SHA256 hash of the content for the filename
         const hash = crypto.createHash("sha256").update(buffer).digest("hex");
         const filename = `${hash}.bin`;
+        lib.reserveResultName(filename);
 
         // Get the results directory directly from process.argv[3]
         // This is the actual .results directory that box-js creates
@@ -2234,6 +2235,7 @@ const sandbox = {
               const filepath = path.resolve(
                 path.join(outputDir, `${hash}_${downloadFilename}`)
               );
+              lib.reserveResultName(path.basename(filepath));
 
               // Ensure file gets written
               try {

@@ -196,10 +196,18 @@ const INDEX_FILES = new Set(["analysis.log", "ioc.json", "urls.json", "active_ur
   "harrington.json"]); // written into the results dir by tools/harrington-enrich.js
 // Windows device names, with or without an extension, are not files there.
 const DEVICE_NAME = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i;
+// Files box-js itself writes into the results dir under predictable names (atob() output
+// named by its sha256, <a download> saves): a resource or snippet the sample names may not
+// overwrite them. Host-side only; not in the sandbox's lib facade.
+const reservedResultNames = new Set();
+function reserveResultName(name) {
+  reservedResultNames.add(String(name).toLowerCase());
+}
 function safeResultName(name) {
   name = String(name);
   if (/^[0-9A-Za-z_-][0-9A-Za-z._-]{0,127}$/.test(name) && !name.endsWith(".") &&
-      !INDEX_FILES.has(name.toLowerCase()) && !DEVICE_NAME.test(name)) return name;
+      !INDEX_FILES.has(name.toLowerCase()) && !reservedResultNames.has(name.toLowerCase()) &&
+      !DEVICE_NAME.test(name)) return name;
   const renamed = uuid.v4();
   log("warn", `Refused result file name ${JSON.stringify(name.slice(0, 200))}; using ${renamed}`);
   return renamed;
@@ -505,6 +513,7 @@ function makeDefaultDict(i) {
 };
 
 module.exports = {
+  reserveResultName,
   argv,
   kill,
   getUUID,

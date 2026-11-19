@@ -46,7 +46,12 @@ function runProbe(probe, extraArgs) {
 		leaked = fs.readdirSync(results).filter((n) =>
 			fs.readFileSync(path.join(results, n), "latin1").includes("host-file-" + "read"));
 	} catch (e) {}
-	return {work, urls, marks, leaked};
+	let overwritten = [];
+	try {
+		overwritten = fs.readdirSync(results).filter((n) => n.endsWith(".bin") &&
+			fs.readFileSync(path.join(results, n), "latin1").includes("overwritten-by-sample"));
+	} catch (e) {}
+	return {work, urls, marks, leaked, overwritten};
 }
 
 const MODES = [
@@ -103,6 +108,12 @@ for (const [label, args, handlers] of MODES) {
 			it("reads no host file into the results", function() {
 				assert.deepStrictEqual(run.leaked, []);
 			});
+			// Only analyze.js's own atob() saves <sha256>.bin; boilerplate.js replaces atob.
+			if (!args.includes("--prepended-code=default")) {
+				it("cannot overwrite a file box-js itself saved", function() {
+					assert.deepStrictEqual(run.overwritten, []);
+				});
+			}
 		});
 	}
 }

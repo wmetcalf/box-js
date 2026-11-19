@@ -22,8 +22,12 @@ const DEFAULT_VARS = Object.freeze({
   _x86: true,
 });
 
-// Not after a word character: "user@end.example" is an address, not a directive.
-const DIRECTIVE = /(?<![\w$@])@(if|elif|else|end|set)(?![\w$])/gi;
+// A directive starts a line or follows blank space or ; { } ( ) , / * (what is left of
+// /*@ and @*/ and of the code around it). Not after a word character ("user@end.example")
+// or a quote ("@set @x = 0" inside a string literal).
+const DIRECTIVE = /(?<=^|[\s;{}(),\/*])@(if|elif|else|end|set)(?![\w$])/gi;
+// "@set" must be followed by "@name =" to be one.
+const SET_SHAPE = /[ \t]*@[A-Za-z_$][\w$]*\s*=/y;
 // JScript's @set values are numbers and booleans. Strings are only allowed as literals
 // inside an expression, and bounded, so a sample cannot grow one across @set lines.
 const MAX_STRING = 4096;
@@ -139,14 +143,15 @@ function evaluate(text, vars) {
   return v;
 }
 
-// Replace @name in active code with the variable's value, as JScript does. Unknown names
-// are left as they are, and so is an @ that follows a word character ("user@_win32.example"
+// Replace @name in active code with the variable's value, as JScript does. An unknown
+// name in JScript's predefined namespace (@_win16, @_mac, @_alpha, ...) is NaN there, so
+// it becomes NaN here; other unknown names are left as they are (CSS "@media" in a string), and so is an @ that follows a word character ("user@_win32.example"
 // in a string): a conditional-compilation variable in code never does. String literals are
 // not tracked: a quote in a regex would hide every later variable on its line, leaving a
 // bare "@name" that fails to parse.
 function substitute(text, vars) {
   return text.replace(/(^|[^\w$@])@([A-Za-z_$][\w$]*)/g, (m, pre, name) => {
-    if (!Object.prototype.hasOwnProperty.call(vars, name)) return m;
+    if (!Object.prototype.hasOwnProperty.call(vars, name)) return name.startsWith("_") ? pre + "NaN" : m;
     const v = vars[name];
     return pre + (typeof v === "number" && Number.isNaN(v) ? "NaN" : String(v));
   });
@@ -214,6 +219,15 @@ function preprocess(code, warn = () => {}) {
       const f = stack.pop();
       if (f && !f.on) off--;
     } else if (kind === "set") {
+      SET_SHAPE.lastIndex = next;
+      if (!SET_SHAPE.test(code)) {
+        // Not "@set @name = ..." (checked without scanning the rest of the line, which
+        // made many of these on one line quadratic): plain text.
+        if (active()) out += m[0];
+        pos = next;
+        DIRECTIVE.lastIndex = next;
+        continue;
+      }
       // @set @name = expression (to the end of the line or a ";")
       let i = next;
       while (i < code.length && /[ \t]/.test(code[i])) i++;

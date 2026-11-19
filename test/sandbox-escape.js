@@ -55,7 +55,7 @@ function runProbe(probe, extraArgs) {
 		leaked = fs.readdirSync(results).filter((n) =>
 			fs.readFileSync(path.join(results, n), "latin1").includes("host-file-" + "read"));
 	} catch (e) {}
-	return {urls, marks, leaked};
+	return {work, urls, marks, leaked};
 }
 
 const MODES = [
@@ -78,6 +78,9 @@ for (const [label, args, handlers] of MODES) {
 			let run;
 			before(function() {
 				run = runProbe(probe, args);
+			});
+			after(function() {
+				if (run) fs.rmSync(run.work, {recursive: true, force: true});
 			});
 			if (probe === "escape-strings.js") {
 				it("has m4 and cc, so the @cc_on payloads reach them", function() {

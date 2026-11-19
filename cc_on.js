@@ -38,7 +38,8 @@ const REGEX_KEYWORDS = new Set(["return", "typeof", "case", "do", "else", "in", 
 
 // 1 for every character that is not code: inside a "..." / '...' / `...` literal, a regex
 // literal, or a comment. A "//@" or "/*@" comment is JScript conditional-compilation code,
-// so its contents stay code. Strings and regexes end at a line end (they cannot span one);
+// so its contents stay code. Strings and regexes end at a line end (they cannot span one,
+// except by a backslash continuation; template literals can);
 // a "/" is a regex when the previous token cannot end an expression. One forward pass.
 function codeMask(text) {
   const n = text.length;
@@ -59,7 +60,8 @@ function codeMask(text) {
     }
     if (c === "\"" || c === "'" || c === "`") {
       mask[i++] = 1;
-      while (i < n && text[i] !== c && text[i] !== "\n" && text[i] !== "\r") {
+      // (A template literal may span lines; it is masked whole, ${...} included.)
+      while (i < n && text[i] !== c && (c === "`" || (text[i] !== "\n" && text[i] !== "\r"))) {
         if (text[i] === "\\" && i + 1 < n) {
           // An escape, or a line continuation (backslash + LF, CR or CRLF).
           mask[i++] = 1;

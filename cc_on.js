@@ -49,6 +49,33 @@ function readCondition(code, i) {
   return {text: code.slice(i), end: code.length};
 }
 
+// Whether code[idx] is inside a string literal, judged from the start of its line: JScript
+// leaves literals alone (an "@set" or "user@_win32.example" in a string is text). Strings do
+// not span lines, so a quote in a comment or regex can only mislead the rest of its own
+// line; a "//" comment is code for this purpose (that is where //@if lives), and a
+// "/* ... */" on the line is skipped.
+function inString(code, idx) {
+  let i = code.lastIndexOf("\n", idx - 1) + 1;
+  let quote = null;
+  while (i < idx) {
+    const c = code[i];
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+    } else if (c === "/" && code[i + 1] === "/") {
+      return false;
+    } else if (c === "/" && code[i + 1] === "*") {
+      const close = code.indexOf("*/", i + 2);
+      if (close < 0 || close >= idx) return false;
+      i = close + 1;
+    } else if (c === "\"" || c === "'" || c === "`") {
+      quote = c;
+    }
+    i++;
+  }
+  return quote !== null;
+}
+
 function lookup(vars, name) {
   return Object.prototype.hasOwnProperty.call(vars, name) ? vars[name] : 0;
 }
@@ -134,8 +161,8 @@ function evaluate(text, vars) {
 // Replace @name in active code with the variable's value, as JScript does; unknown names
 // are left as they are.
 function substitute(text, vars) {
-  return text.replace(/@([A-Za-z_$][\w$]*)/g, (m, name) => {
-    if (!Object.prototype.hasOwnProperty.call(vars, name)) return m;
+  return text.replace(/@([A-Za-z_$][\w$]*)/g, (m, name, offset) => {
+    if (!Object.prototype.hasOwnProperty.call(vars, name) || inString(text, offset)) return m;
     const v = vars[name];
     return typeof v === "string" ? JSON.stringify(v) : String(v);
   });
@@ -161,6 +188,7 @@ function preprocess(code, warn = () => {}) {
   DIRECTIVE.lastIndex = 0;
   let m;
   while ((m = DIRECTIVE.exec(code)) !== null) {
+    if (inString(code, m.index)) continue;
     if (active()) out += substitute(code.slice(pos, m.index), vars);
     let next = m.index + m[0].length;
     const kind = m[1].toLowerCase();

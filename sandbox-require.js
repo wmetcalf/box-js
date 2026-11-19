@@ -237,6 +237,8 @@ function makeZlib() {
       }
       const data = typeof input === "string" ? String(input) : nodeBuffer.Buffer.from(input);
       const result = nodeZlib[name](data, opts);
+      // maxOutputLength is ignored by node < 12.19; enforce the cap anyway.
+      if (result.length > ZLIB_MAX_OUTPUT) throw new RangeError("zlib output exceeds the sandbox cap");
       const copy = nodeBuffer.Buffer.alloc(result.length);
       result.copy(copy);
       return copy;

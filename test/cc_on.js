@@ -35,8 +35,15 @@ describe("conditional compilation (cc_on.js)", function() {
 		}
 	});
 	it("leaves the text of the taken branch untouched", function() {
-		const body = "var s = \"#include </etc/passwd> %:include ??= m4_syscmd(x) \\\n\"; /* c */ `q'";
+		const body = "var s = \"#include </etc/passwd> %:include ??= m4_syscmd(x) \\\n\"; /* c */ `q'`\n";
 		assert.strictEqual(preprocess(`@if (1)${body}@end`).replace(/^\n|\n$/g, ""), body);
+	});
+	it("leaves string literals alone", function() {
+		assert.strictEqual(run("var note = \"@set probe\"; var answer = 42;").out, "var note = \"@set probe\"; var answer = 42;");
+		assert.strictEqual(run("@if (1) var d = \"user@_win32.example\", e = '@end'; f(@_win32); @end").out,
+			"var d = \"user@_win32.example\", e = '@end'; f(true);");
+		// A quote in a // comment only affects its own line.
+		assert.strictEqual(run("// don't\n@if (0) A(); @else B(); @end").out, "// don't B();");
 	});
 	it("starts no process", function() {
 		const names = ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork"];

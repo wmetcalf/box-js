@@ -918,12 +918,16 @@ function rewrite(code, useException=false) {
                 // len, format, dnl) only exist as m4_*, and every "m4_" in the sample is
                 // escaped; quoting is switched off after the two defines below, so
                 // backticks and quotes pass through. cpp never sees a "#", "%:" (the
-                // digraph), _Pragma or __has_* the sample wrote, so "#include </etc/..>"
-                // is not a directive however it is placed. Each marker is
+                // digraph), "??" (trigraphs), _Pragma or __has_* the sample wrote, nor a
+                // backslash that ends a line (cpp splices those first, so "%\<newline>:"
+                // would become "%:"), so "#include </etc/..>" is not a directive
+                // however it is placed. Each marker is
                 // _boxjs_esc<letter>_ and an existing "_boxjs_esc" is escaped first, so
                 // no marker is a prefix of another and the restore after cc is exact.
                 code = code
                     .replace(/_boxjs_esc/g, "_boxjs_escE_")
+                    .replace(/\\(?=[ \t\f\v]*(?:\r\n|\r|\n))/g, "_boxjs_escB_")
+                    .replace(/\?\?/g, "_boxjs_escQ_")
                     .replace(/m4_/g, "_boxjs_escM_")
                     .replace(/#/g, "_boxjs_escH_")
                     .replace(/%:/g, "_boxjs_escD_")
@@ -963,6 +967,8 @@ m4_changequote(,)m4_dnl
                     .replace(/_boxjs_escD_/g, "%:")
                     .replace(/_boxjs_escH_/g, "#")
                     .replace(/_boxjs_escM_/g, "m4_")
+                    .replace(/_boxjs_escQ_/g, "??")
+                    .replace(/_boxjs_escB_/g, "\\")
                     .replace(/_boxjs_escE_/g, "_boxjs_esc");
             }
             code = code.replace(/_boxjs_at/g, "@");
@@ -1894,7 +1900,8 @@ const sandbox = {
   },
   Enumerator: require("./emulator/Enumerator"),
   GetObject: require("./emulator/WMI").GetObject,
-  JSON,
+  // No JSON here: the sandbox's own intrinsic is used. Passing the host's let a sample
+  // replace JSON.stringify, which lib.js writes every results file with.
   location: new Proxy(
     {
       href: "about:blank",

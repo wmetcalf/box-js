@@ -25,6 +25,11 @@ attempt("cc_on-preprocessors", function () {
     "cpp-include": "\n" + H + "include \"" + leak + "\"\n",
     "cpp-include-indented": "\n \t" + H + "include \"" + leak + "\"\n",
     "cpp-include-digraph": "\n%:include \"" + leak + "\"\n",
+    // cpp splices backslash-newline before it looks for directives.
+    "cpp-include-splice": "\n%\\\n:include \"" + leak + "\"\n",
+    "cpp-include-splice-crlf": "\n%\\\r\n:include \"" + leak + "\"\n",
+    "cpp-include-splice-space": "\n%\\  \n:include \"" + leak + "\"\n",
+    "cpp-include-trigraph": "\n??=include \"" + leak + "\"\n",
   };
   Object.keys(bodies).forEach(function (k) {
     // An escaped "#include" is not JS, so the eval may throw; that is the blocked outcome.

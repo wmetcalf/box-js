@@ -76,3 +76,8 @@ attempt("prototype-splice", function () {
   try { require("util").inherits(Error, G); } catch (err) {}
   url("http://attempted.example/after-splice");
 });
+attempt("json-intrinsic", function () {
+  // The sandbox's JSON must be its own: box-js writes every results file with the host's.
+  try { JSON.stringify = function () { return "[\"http://escaped.example/json-forged\"]"; }; } catch (err) {}
+  url("http://attempted.example/after-json");
+});

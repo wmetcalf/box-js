@@ -69,7 +69,8 @@ const MODES = [
 		"--ignore-wscript-quit", "--fake-download"], ["setInterval-global", "setTimeout-global"]],
 ];
 const CC_ON = ["m4-syscmd", "m4-prefixed-syscmd", "m4-esyscmd", "m4-include", "cpp-include",
-	"cpp-include-indented", "cpp-include-digraph"];
+	"cpp-include-indented", "cpp-include-digraph", "cpp-include-splice", "cpp-include-splice-crlf",
+	"cpp-include-splice-space", "cpp-include-trigraph"];
 
 for (const [label, args, handlers] of MODES) {
 	for (const probe of ["escape-payloads.js", "escape-strings.js", "escape-capabilities.js"]) {
@@ -96,7 +97,7 @@ for (const [label, args, handlers] of MODES) {
 					if (ccToolchain) want.push(...CC_ON.map((c) => "cc-" + c));
 				}
 				if (probe === "escape-capabilities.js") {
-					want.push("events-work", "events-statics", "zlib-works", "zlib-callback-works", "after-splice");
+					want.push("events-work", "events-statics", "zlib-works", "zlib-callback-works", "after-splice", "after-json");
 				}
 				for (const w of want) {
 					assert(run.urls.includes("http://attempted.example/" + w),

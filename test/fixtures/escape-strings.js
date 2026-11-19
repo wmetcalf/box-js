@@ -43,4 +43,10 @@ attempt("cc_on-preprocessors", function () {
     try { eval(src); } catch (e) {}
   });
 });
+attempt("cc_on-evasion", function () {
+  // A "#" in an @if condition used to open an m4 comment that swallowed the closing
+  // parenthesis; m4 failed and box-js analysed an empty program.
+  var A = String.fromCharCode(64), H = String.fromCharCode(35);
+  eval("var cc2 = 1; // " + A + "cc_on " + A + "if (1 /* " + H + " */)\nurl('http://attempted.example/cc-hash-condition');\n" + A + "end\n");
+});
 url("http://attempted.example/done");

@@ -907,6 +907,7 @@ function rewrite(code, useException=false) {
                 .replace(/\/\*@/g, "\n").replace(/@\*\//g, "\n");
             // "@if" processing requires m4 and cc, but don't require them otherwise
             if (/@if/.test(code)) {
+                const beforeIf = code;
                 /*
                   "@if (cond) source" becomes "\n _boxjs_if(cond)" with JS
                   "\n _boxjs_if(cond)" becomes "\n #if (cond) \n source" with m4
@@ -918,7 +919,8 @@ function rewrite(code, useException=false) {
                 // m4 runs with -P, so its builtins (syscmd, esyscmd, include, and the
                 // ones scripts use as names: eval, index, substr, len, format, dnl) only
                 // exist as m4_*; every "m4_" in the sample is escaped, quoting is switched
-                // off after the two defines below, and NUL bytes (which m4 drops, so
+                // off after the two defines below (and comments, so a "#" in an @if
+                // condition does not swallow its closing parenthesis), and NUL bytes (which m4 drops, so
                 // "%<NUL>:" would leave it as "%:") are escaped too.
                 //
                 // cpp's escaping is applied to m4's OUTPUT, i.e. to exactly what cpp
@@ -947,11 +949,15 @@ function rewrite(code, useException=false) {
                 code = `
 m4_define(\`_boxjs_if', _boxjs_escI_ ($1)\n)
 m4_define(\`_boxjs_elif', _boxjs_escL_ ($1)\n)
-m4_changequote(,)m4_dnl
+m4_changequote(,)m4_changecom()m4_dnl
 ` + code;
                 lib.info("    Replacing @cc_on statements (use --no-cc_on-rewrite to skip)...", false);
+                // Bounded: hostile input must not hang the analysis, and the default
+                // 1 MiB maxBuffer silently truncated larger samples.
+                const preprocessLimits = {timeout: 60000, maxBuffer: 256 * 1024 * 1024};
                 const outputM4 = child_process.spawnSync("m4", ["-P"], {
-                    input: code
+                    input: code,
+                    ...preprocessLimits,
                 });
                 const cppInput = outputM4.stdout.toString("utf8")
                     .replace(/\\(?=[ \t\f\v]*(?:\r\n|\r|\n))/g, "_boxjs_escB_")
@@ -973,8 +979,14 @@ m4_changequote(,)m4_dnl
                     "-", // read from stdin
                 ], {
                     input: cppInput,
+                    ...preprocessLimits,
                 });
-                code = outputCc.stdout.toString("utf8")
+                // A failed m4 or cc used to leave the analysed code empty, i.e. a
+                // sample could make box-js analyse nothing. Keep the source instead.
+                if (outputM4.status !== 0 || outputCc.status !== 0 || outputCc.error || outputM4.error) {
+                    lib.warning(`@cc_on preprocessing failed (m4 ${outputM4.status}, cc ${outputCc.status}); analysing the source without it`);
+                    code = beforeIf;
+                } else code = outputCc.stdout.toString("utf8")
                     .replace(/_boxjs_escA_/g, "__has_")
                     .replace(/_boxjs_escP_/g, "_Pragma")
                     .replace(/_boxjs_escD_/g, "%:")

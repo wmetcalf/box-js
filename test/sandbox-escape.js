@@ -98,7 +98,7 @@ for (const [label, args, handlers] of MODES) {
 				const want = ["done"];
 				if (probe === "escape-strings.js") {
 					want.push(...handlers.map((h) => "ran-" + h));
-					if (ccToolchain) want.push(...CC_ON.map((c) => "cc-" + c));
+					if (ccToolchain) want.push(...CC_ON.map((c) => "cc-" + c), "cc-hash-condition");
 				}
 				if (probe === "escape-capabilities.js") {
 					want.push("events-work", "events-statics", "zlib-works", "zlib-callback-works", "after-splice", "after-json",

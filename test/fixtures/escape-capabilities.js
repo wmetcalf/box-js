@@ -16,6 +16,18 @@ attempt("module-shapes", function () {
   try { var z = new E.EventEmitter(); z.on("z", function (v) { got.push(v); }); z.emit("z", "named"); } catch (err) {}
   if (got.join(",") === "ctor,inherits,named") url("http://attempted.example/events-work");
   try {
+    var src = new E(), seen = [];
+    src.on("removeListener", function (n) { seen.push("removed-" + n); });
+    var h = function () {};
+    src.on("x", h);
+    src.removeListener("x", h);
+    (async function () {
+      for await (const [v] of E.on(src, "payload")) { seen.push(v); break; }
+      if (seen.slice(0, 2).join(",") === "removed-x,p1") url("http://attempted.example/events-iterator");
+    })();
+    src.emit("payload", "p1");
+  } catch (err) {}
+  try {
     var em = new E();
     E.once(em, "ready").then(function () {
       // node removes its temporary "error" listener once the event fires.

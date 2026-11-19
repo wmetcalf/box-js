@@ -150,9 +150,14 @@ const PRELUDE = `(function () {
     const l = this._events && this._events[name];
     if (!l) return this;
     for (let i = l.length - 1; i >= 0; i--) {
-      if (l[i] === fn || l[i].listener === fn) { l.splice(i, 1); break; }
+      if (l[i] === fn || l[i].listener === fn) {
+        const removed = l[i];
+        l.splice(i, 1);
+        if (l.length === 0) delete this._events[name];
+        if (this._events.removeListener) this.emit("removeListener", name, removed.listener || removed);
+        return this;
+      }
     }
-    if (l.length === 0) delete this._events[name];
     return this;
   };
   P.removeAllListeners = function (name) {
@@ -195,6 +200,52 @@ const PRELUDE = `(function () {
     });
   };
   EventEmitter.listenerCount = function (emitter, name) { return emitter.listenerCount(name); };
+  // events.on(emitter, name): an async iterator of each emission's arguments.
+  EventEmitter.on = function (emitter, name) {
+    const queue = [];
+    const waiting = [];
+    let failure = null;
+    let done = false;
+    const push = function () {
+      const args = Array.prototype.slice.call(arguments);
+      if (waiting.length) waiting.shift().resolve({value: args, done: false});
+      else queue.push(args);
+    };
+    const fail = function (err) {
+      failure = err;
+      while (waiting.length) waiting.shift().reject(err);
+    };
+    emitter.on(name, push);
+    if (name !== "error") emitter.on("error", fail);
+    const finish = function () {
+      done = true;
+      emitter.removeListener(name, push);
+      emitter.removeListener("error", fail);
+      while (waiting.length) waiting.shift().resolve({value: undefined, done: true});
+    };
+    const it = {
+      next: function () {
+        if (queue.length) return Promise.resolve({value: queue.shift(), done: false});
+        if (failure) {
+          const err = failure;
+          failure = null;
+          return Promise.reject(err);
+        }
+        if (done) return Promise.resolve({value: undefined, done: true});
+        return new Promise(function (resolve, reject) { waiting.push({resolve: resolve, reject: reject}); });
+      },
+      return: function () {
+        finish();
+        return Promise.resolve({value: undefined, done: true});
+      },
+      throw: function (err) {
+        finish();
+        return Promise.reject(err);
+      },
+    };
+    it[Symbol.asyncIterator] = function () { return it; };
+    return it;
+  };
   EventEmitter.getEventListeners = function (emitter, name) { return emitter.listeners(name); };
   EventEmitter.setMaxListeners = function (n) {
     const emitters = Array.prototype.slice.call(arguments, 1);
@@ -233,6 +284,11 @@ function makeZlib() {
       if (options && typeof options === "object") {
         for (const key of ZLIB_OPTIONS) {
           if (typeof options[key] === "number") opts[key] = options[key];
+        }
+        // A preset dictionary (deflate/inflate with one fails without it), copied.
+        if (options.dictionary !== undefined && options.dictionary !== null &&
+            typeof options.dictionary !== "number") {
+          opts.dictionary = nodeBuffer.Buffer.from(options.dictionary);
         }
       }
       const data = typeof input === "string" ? String(input) : nodeBuffer.Buffer.from(input);

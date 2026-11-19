@@ -102,7 +102,7 @@ for (const [label, args, handlers] of MODES) {
 				}
 				if (probe === "escape-capabilities.js") {
 					want.push("events-work", "events-statics", "zlib-works", "zlib-callback-works", "after-splice", "after-json",
-						"events-once-clean");
+						"events-once-clean", "events-iterator");
 				}
 				for (const w of want) {
 					assert(run.urls.includes("http://attempted.example/" + w),

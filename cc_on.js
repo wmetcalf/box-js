@@ -33,6 +33,8 @@ const SET_SHAPE = /[ \t]*@[A-Za-z_$][\w$]*\s*=/y;
 const MAX_STRING = 4096;
 
 const REGEX_AFTER = /[(,=:[!&|?{};+\-*%<>~^]/;
+const CC_COMMENT = /^@(if|elif|else|end|set|_)/i;
+const PAREN_KEYWORDS = new Set(["if", "while", "for", "with"]);
 const REGEX_KEYWORDS = new Set(["return", "typeof", "case", "do", "else", "in", "new", "delete",
   "void", "throw", "instanceof"]);
 
@@ -53,10 +55,14 @@ function codeMask(text) {
   const templates = [];
   let i = 0;
   const atAt = (k) => {
-    // Comment text starting with "@" (after blanks): conditional-compilation code.
+    // Comment text starting with a conditional-compilation directive or variable (after
+    // blanks) is code: //@if, //@set, //@_win32 (and "//@cc_on @if" once analyze.js has
+    // removed "@cc_on"). JSDoc-style "// @param" stays a comment.
     while (k < n && (text[k] === " " || text[k] === "\t")) k++;
-    return text[k] === "@";
+    return CC_COMMENT.test(text.slice(k, k + 8));
   };
+  // Parentheses opened right after if/while/for/with: a "/" after their ")" starts a regex.
+  const parens = [];
   const markRange = (a, b) => {
     for (let k = a; k < b; k++) mask[k] = 1;
   };
@@ -163,6 +169,24 @@ function codeMask(text) {
       const end = e < 0 ? n : e + 2;
       markRange(i, end);
       i = end;
+      continue;
+    }
+    if (c === "(") {
+      parens.push(isWord(prev) && PAREN_KEYWORDS.has(word));
+    } else if (c === ")") {
+      if (parens.pop()) {
+        prev = "(";
+        word = "";
+        gap = false;
+        i++;
+        continue;
+      }
+    } else if ((c === "+" || c === "-") && text[i + 1] === c) {
+      // ++ / -- : a "/" after them divides (x++ / 2).
+      prev = "a";
+      word = "";
+      gap = false;
+      i += 2;
       continue;
     }
     if (c === "*" && text[i + 1] === "/") {

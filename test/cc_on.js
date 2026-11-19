@@ -119,6 +119,11 @@ describe("conditional compilation (cc_on.js)", function() {
 			["return x /y/ 2; @if (1) E(); @end", "return x /y/ 2; E();"],
 			["/*@if (1) Q(); @end*/ var q = @_win32; var z = a/b;", "/* Q(); */ var q = true; var z = a/b;"],
 			["//" + " ".repeat(70) + "@if (1) A(); @end", "// A();"],
+			["var half = n-- / 2; var u = \"http://x.example/y\"; @if (@_win32) A(); @end", "var half = n-- / 2; var u = \"http://x.example/y\"; A();"],
+			["if (u) /:/.test(u); var w = \"http://x/\"; @if (@_win32) A(); @end", "if (u) /:/.test(u); var w = \"http://x/\"; A();"],
+			["if(!v)return 0;else return /\"/.test(v); @if (@_win32) A(); @end", "if(!v)return 0;else return /\"/.test(v); A();"],
+			["x = 1\r// c\r@if (@_win32)\rA();\r@end\r", "x = 1 // c A();"],
+			["x = 1;\n// @note run with `cscript\n@if (@_win32)\nA();\n@end\n", "x = 1; // @note run with `cscript A();"],
 		];
 		for (const [src, want] of cases) assert.strictEqual(run(src).out, want, src);
 	});

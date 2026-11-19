@@ -15,27 +15,43 @@ function require(arg) {
 	    exec: _execSync,
 	},
 	"http" : _http,
-	// https used to fall through to the real module; the http stub, with the URL logged
-	// as https (the http stub builds "http://" from an options object).
-	"https" : {
-	    __name: "_https",
-	    request: function (url, options) {
-		if (url && typeof url === "object" && typeof url.href === "string") {
-		    // A URL object.
-		    return _http.request(url.href, options);
+	// https used to fall through to the real module; now logged through the http stub,
+	// with the URL as https (the http stub builds "http://" from an options object).
+	"https" : (function () {
+	    // The http stub logs the request and then throws "Fake error". The real https
+	    // module (which this id reached before) fails asynchronously instead, so the code
+	    // after a beacon kept running; keep that: log, then hand back an inert request.
+	    function fakeRequest() {
+		const req = {__name: "_https_request"};
+		for (const m of ["on", "once", "write", "end", "setTimeout", "setHeader", "destroy", "abort",
+				 "setNoDelay", "setSocketKeepAlive", "removeListener", "off"]) {
+		    req[m] = function () { return req; };
 		}
-		if (url && typeof url === "object" && typeof url.hostname !== "undefined") {
-		    const p = url.port === undefined || url.port === null ? "" : String(url.port);
-		    const port = (p !== "" && p !== "443") ? ":" + p : "";
-		    const where = url.path || ((url.pathname || "") + (url.search || ""));
-		    return _http.request("https://" + url.hostname + port + where, url);
-		}
-		return _http.request(url, options);
-	    },
-	    get: function (url, headers) {
-		return _http.get(url, headers);
-	    },
-	},
+		return req;
+	    }
+	    function log(url, options) {
+		try { _http.request(url, options); } catch (e) {}
+	    }
+	    return {
+		__name: "_https",
+		request: function (url, options) {
+		    if (url && typeof url === "object" && typeof url.href === "string") {
+			log(url.href, options); // A URL object.
+		    } else if (url && typeof url === "object" && typeof url.hostname !== "undefined") {
+			const p = url.port === undefined || url.port === null ? "" : String(url.port);
+			const port = (p !== "" && p !== "443") ? ":" + p : "";
+			const where = url.path || ((url.pathname || "") + (url.search || ""));
+			log("https://" + url.hostname + port + where, url);
+		    } else {
+			log(url, options);
+		    }
+		    return fakeRequest();
+		},
+		get: function (url, headers) {
+		    return _http.get(url, headers);
+		},
+	    };
+	})(),
         "net" : {
             createConnection: _createConnection,
             Socket: _Socket,
